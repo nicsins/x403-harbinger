@@ -4,7 +4,7 @@
 **Document:** `X403-HP-1`  
 **URN:** `urn:x403:harbinger:1.0`  
 **Status:** HTTP 403 Forbidden until grant  
-**Live edge:** https://x403-harbinger-nic-s-projects-33d61015.vercel.app
+**Live edge:** https://x403-harbinger.vercel.app · https://www.x403-harbinger.com
 
 Harbinger is an HTTP-native protocol that lets one agent charge another for a notification when a named event — or a correlated set of events — occurs.
 

@@ -1,7 +1,7 @@
 import type { MetadataRoute } from "next";
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const base = "https://x403-harbinger-nic-s-projects-33d61015.vercel.app";
+  const base = "https://www.x403-harbinger.com";
   const paths = ["", "/spec", "/directory", "/crawlers", "/notify", "/mail"];
   return paths.map((path) => ({
     url: `${base}${path}`,
