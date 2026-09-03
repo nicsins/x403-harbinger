@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { ReturnHook } from "../components/return-hook";
 import type { DeskPrint, DeskSnapshot } from "@/lib/desk";
 
 function fmtPct(n: number | null | undefined) {
@@ -25,6 +26,13 @@ export function Board({ initial }: { initial: DeskSnapshot }) {
   const [snap, setSnap] = useState<DeskSnapshot>(initial);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState(false);
+
+  useEffect(() => {
+    if (!flash) return;
+    const id = window.setTimeout(() => setFlash(false), 520);
+    return () => window.clearTimeout(id);
+  }, [flash, snap.ranAt]);
 
   async function refresh() {
     setBusy(true);
@@ -36,6 +44,7 @@ export function Board({ initial }: { initial: DeskSnapshot }) {
         setErr(`HTTP ${res.status}`);
         return;
       }
+      setFlash(true);
       setSnap({
         ...snap,
         ...body,
@@ -51,25 +60,28 @@ export function Board({ initial }: { initial: DeskSnapshot }) {
 
   return (
     <main className="main">
-      <section className="grid-3">
+      <section className="grid-3 rise">
         <div>
           <p className="tape">free desk · last print is free · join is not</p>
-          <h1 className="display">A public tape so humans — and their agents — can find the edge.</h1>
+          <h1 className="display">Watch it tick. That's the free one.</h1>
           <p className="muted">
-            Hot coins, the loudest G10 pair, Tesla live. SpaceX, xAI, and X stay last-reported marks —
-            they are not listed. Briefs and two live news feeds sit under the tape. Correlation watches
-            still answer 403 until hp1. Not investment advice.
+            Hot coins, the loudest G10 pair, Tesla live. SpaceX, xAI, and X stay last-reported marks.
+            Refresh when you want another hit. The join still answers 403 until hp1 — that's how you
+            know it's worth coming back. Not investment advice.
           </p>
+          <div style={{ marginTop: 16 }}>
+            <ReturnHook />
+          </div>
           <div className="row" style={{ marginTop: 20 }}>
             <button className="btn primary" disabled={busy} onClick={() => void refresh()}>
-              {busy ? "Refreshing…" : "Refresh the free tape"}
+              {busy ? "Pulling the next print…" : "Give me another print"}
             </button>
             <Link href="/agency" className="btn ghost" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
-              Paid joins
+              Pay for the join
             </Link>
           </div>
         </div>
-        <section className="panel">
+        <section className="panel want">
           <p className="tape">Free pings · no grant</p>
           <ul className="list">
             {snap.freePings.map((p) => (
@@ -77,7 +89,7 @@ export function Board({ initial }: { initial: DeskSnapshot }) {
                 <span className="pill ok">free</span>{" "}
                 <span className="mono">{p.id}</span>
                 <p style={{ margin: "6px 0 0" }}>{p.name}</p>
-                <p className={`mono ${pctClass(p.pct)}`} style={{ marginTop: 4 }}>
+                <p className={`ping-stat ${pctClass(p.pct)} ${flash ? "flash" : ""}`} style={{ marginTop: 4 }}>
                   {p.label}
                 </p>
               </li>
@@ -89,7 +101,7 @@ export function Board({ initial }: { initial: DeskSnapshot }) {
       </section>
 
       <section>
-        <p className="tape">Highest movers · 1d</p>
+        <p className="tape">Highest movers · 1d · the loud ones</p>
         <div className="table-wrap">
           <table className="tape-table">
             <thead>
@@ -202,8 +214,8 @@ export function Board({ initial }: { initial: DeskSnapshot }) {
           </ul>
           {!snap.briefs.length ? <p className="muted">No briefs this pass.</p> : null}
         </article>
-        <article className="panel">
-          <p className="tape">Network</p>
+        <article className="lock-rail">
+          <p className="tape">Network · stay close</p>
           <ul className="list">
             {snap.network.map((n) => (
               <li className="item" key={n.id}>

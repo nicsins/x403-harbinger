@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,500;0,6..72,600;1,6..72,500&display=swap");
 
 :root {
   --bg: #0b0b0c;
@@ -166,6 +166,105 @@ pre {
   overflow: hidden;
 }
 .video iframe { width: 100%; height: 100%; border: 0; display: block; }
+
+:root {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-primary: var(--primary);
+  --color-primary-fg: var(--primary-fg);
+  --color-border: var(--border);
+  --color-danger: var(--danger);
+  --color-ok: var(--ok);
+  --shadow-border: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-border-hover: 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+.bar { background: color-mix(in oklab, var(--bg) 88%, black); }
+.brand { align-items: center; }
+.panel {
+  box-shadow: var(--shadow-border);
+  border: 0;
+  transition: box-shadow 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.panel:hover { box-shadow: var(--shadow-border-hover); }
+.panel.want {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--raised) 70%, var(--surface)) 0%, var(--surface) 100%);
+}
+.btn { transition: transform 150ms ease-out, background 150ms ease-out, border-color 150ms ease-out, filter 150ms ease-out; }
+.btn:active:not(:disabled) { transform: scale(0.96); }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.06); }
+.btn.ghost:hover:not(:disabled) { background: var(--raised); }
+.nav a { transition: background 150ms cubic-bezier(0.22, 1, 0.36, 1), color 150ms cubic-bezier(0.22, 1, 0.36, 1); }
+.ping-stat {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: clamp(18px, 2.4vw, 22px);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  margin: 8px 0 0;
+}
+.tape-table tbody tr { transition: background 150ms ease-out; }
+.tape-table tbody tr:hover { background: color-mix(in oklab, var(--raised) 70%, transparent); }
+h1, h2, h3 { text-wrap: balance; }
+p { text-wrap: pretty; }
+h1.display { font-size: clamp(32px, 6vw, 52px); }
+
+.live-dot {
+  width: 8px; height: 8px; border-radius: 99px; background: var(--ok); flex-shrink: 0;
+  box-shadow: 0 0 0 0 color-mix(in oklab, var(--ok) 55%, transparent);
+  animation: livePulse 1.8s ease-out infinite;
+}
+@keyframes livePulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--ok) 50%, transparent); }
+  70% { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.hotstrip {
+  display: flex; align-items: center; gap: 12px; height: 36px; padding: 0 16px;
+  overflow: hidden; border-bottom: 1px solid var(--border); background: var(--surface);
+}
+.hotstrip-label {
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10px;
+  letter-spacing: 0.16em; text-transform: uppercase; color: var(--subtle); flex-shrink: 0;
+}
+.hotstrip-mask { overflow: hidden; flex: 1; min-width: 0; }
+.hotstrip-track {
+  display: flex; gap: 40px; width: max-content; animation: ticker 42s linear infinite;
+  font: 500 12px/36px "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums;
+  color: var(--fg); white-space: nowrap;
+}
+.hotstrip:hover .hotstrip-track { animation-play-state: paused; }
+.hotstrip-track b { color: var(--fg); font-weight: 500; }
+@keyframes ticker {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+.return-hook {
+  font-family: "Newsreader", "Times New Roman", serif;
+  font-size: 18px; font-style: italic; letter-spacing: -0.02em; color: var(--fg); margin: 0;
+}
+.lock-rail {
+  border: 1px dashed color-mix(in oklab, var(--primary) 28%, var(--border));
+  border-radius: 16px; padding: 22px;
+  background: color-mix(in oklab, var(--surface) 80%, transparent);
+}
+.flash { animation: numPop 500ms cubic-bezier(0.22, 1, 0.36, 1); }
+@keyframes numPop {
+  from { opacity: 0.4; transform: translateY(4px); filter: blur(2px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+.rise { animation: rise 400ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.rise-2 { animation-delay: 70ms; }
+.rise-3 { animation-delay: 140ms; }
+.rise-4 { animation-delay: 210ms; }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
+  .hotstrip-track { transform: none; }
 }

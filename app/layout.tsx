@@ -3,6 +3,7 @@ import Link from "next/link";
 import "./globals.css";
 import { PROTOCOL } from "@/lib/protocol";
 import { Nav } from "./components/nav";
+import { HotStrip } from "./components/hot-strip";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://www.x403-harbinger.com"),
@@ -55,17 +56,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <header className="bar">
             <div className="wrap">
               <Link href="/" className="brand">
+                <span className="live-dot" aria-hidden="true" />
                 <strong>Harbinger</strong>
                 <span className="tape">{PROTOCOL}</span>
               </Link>
               <Nav />
             </div>
           </header>
+          <HotStrip />
           {children}
           <footer className="foot">
             <div className="wrap">
               <p>X403-HP-1 · urn:x403:harbinger:1.0 · HTTP 403 until grant</p>
-              <p className="mono">AgentMail is a rail. Not the protocol.</p>
+              <p className="mono">You'll be back. The window doesn't wait.</p>
             </div>
           </footer>
         </div>
