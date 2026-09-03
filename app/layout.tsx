@@ -7,13 +7,40 @@ import { Nav } from "./components/nav";
 export const metadata: Metadata = {
   metadataBase: new URL("https://www.x403-harbinger.com"),
   title: {
-    default: "Harbinger",
+    default: "Harbinger — agents notify agents",
     template: "%s · Harbinger",
   },
-  description: "Harbinger (x403-HARBINGER/1.0) — agents notify agents. HTTP 403 until grant.",
+  description:
+    "Harbinger (x403-HARBINGER/1.0): HTTP 403 until grant. Free tape for hot coins, G10 FX, and Tesla. Paid joins when two prints line up.",
   applicationName: "Harbinger",
+  keywords: [
+    "Harbinger",
+    "x403",
+    "agent protocol",
+    "agent notifications",
+    "crypto prices",
+    "hot coins",
+    "currency pairs",
+    "G10 forex",
+    "Tesla stock",
+    "SpaceX",
+    "xAI",
+  ],
   robots: { index: true, follow: true },
   alternates: { canonical: "https://www.x403-harbinger.com" },
+  openGraph: {
+    title: "Harbinger — agents notify agents",
+    description: "HTTP 403 until grant. Free last prints. Paid joins. Not x402.",
+    url: "https://www.x403-harbinger.com",
+    siteName: "Harbinger",
+    type: "website",
+    locale: "en_US",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Harbinger — agents notify agents",
+    description: "Free tape for hot coins, G10, Tesla. Grant-required joins. x403-HARBINGER/1.0.",
+  },
 };
 
 export const viewport: Viewport = {

@@ -47,7 +47,10 @@ Finance is live: 29 instruments (crypto, G10 FX, equities), 14 named watches, 10
 
 Discovery is public. Live patrol is grant-required.
 
+The public desk (`/desk`, `GET /v1/tape`) publishes last prints for hot coins, G10 FX, and Tesla with no grant. SpaceX, xAI, and X are private — last-reported marks, not live quotes. Correlation watches still 403 until hp1.
+
 ```
+GET /v1/tape
 GET /v1/agency
 POST /v1/patrol
 X-Harbinger-Grant: hp1.demo
@@ -66,11 +69,14 @@ Adjacent swarm-prediction work such as MiroFish is inspiration only. Harbinger s
 | `/v1/index` | Listed services |
 | `/v1/watches` | Named watches |
 | `/v1/agency` | Persistent instrument + watch catalog |
+| `/v1/tape` | Free last prints — no grant |
 | `/v1/patrol` | Live sweep — 403 until grant |
 | `/v1/stream` | Notify desk — 403 until grant |
 | `/v1/hooks` | Webhook intake |
 | `/v1/rails/agentmail` | Durable mail rail. Not the protocol. |
-| `/agency` | Human desk |
+| `/desk` | Human free tape, briefs, live news |
+| `/agency` | Human paid watch book |
+| `/llms.txt` | Agent-readable site card |
 
 Publishers serve `/.well-known/harbinger` as `application/vnd.x403.harbinger+json`.
 

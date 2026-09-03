@@ -12,6 +12,7 @@ async function shot(path: string, init?: RequestInit): Promise<Shot> {
 
 export default function CrawlersPage() {
   const [discover, setDiscover] = useState<Shot | null>(null);
+  const [tape, setTape] = useState<Shot | null>(null);
   const [forbidden, setForbidden] = useState<Shot | null>(null);
   const [granted, setGranted] = useState<Shot | null>(null);
   const [busy, setBusy] = useState(false);
@@ -19,6 +20,7 @@ export default function CrawlersPage() {
   async function run() {
     setBusy(true);
     setDiscover(await shot("/.well-known/harbinger"));
+    setTape(await shot("/v1/tape", { headers: { [H.crawl]: "1" } }));
     setForbidden(await shot("/v1/stream?watch=w_eth_funding", { headers: { [H.crawl]: "1" } }));
     setGranted(await shot("/v1/stream?watch=w_eth_funding", { headers: { [H.crawl]: "1", [H.grant]: DEMO_GRANT } }));
     setBusy(false);
@@ -29,7 +31,7 @@ export default function CrawlersPage() {
       <section>
         <p className="tape">X-Harbinger-Crawl</p>
         <h1 className="display">Run the 403 handshake</h1>
-        <p className="muted">Discovery is public. The stream is forbidden until an hp1 grant lands.</p>
+        <p className="muted">Discovery and the free tape are public. The stream is forbidden until an hp1 grant lands.</p>
         <div className="row" style={{ marginTop: 20 }}>
           <button className="btn primary" disabled={busy} onClick={run}>
             {busy ? "Speaking the wire" : "Discover, 403, then grant"}
@@ -37,8 +39,9 @@ export default function CrawlersPage() {
         </div>
       </section>
       <Card title="1  /.well-known/harbinger" shot={discover} expect={200} />
-      <Card title="2  GET /v1/stream without grant" shot={forbidden} expect={403} />
-      <Card title={"3  retry with " + DEMO_GRANT} shot={granted} expect={200} />
+      <Card title="2  GET /v1/tape — free, even with crawl flag" shot={tape} expect={200} />
+      <Card title="3  GET /v1/stream without grant" shot={forbidden} expect={403} />
+      <Card title={"4  retry with " + DEMO_GRANT} shot={granted} expect={200} />
     </main>
   );
 }

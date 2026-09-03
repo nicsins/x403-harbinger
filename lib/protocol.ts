@@ -145,6 +145,16 @@ export const SERVICES = [
     note: "Persistent watch book. Crypto, FX, equity. Correlation is the product.",
   },
   {
+    id: "svc_tape",
+    name: "Free tape",
+    host: "this-edge",
+    path: "/v1/tape",
+    kind: "desk",
+    price: "free last print",
+    crawls24h: 240,
+    note: "Public movers. Hot coins, G10, Tesla. No grant.",
+  },
+  {
     id: "svc_grokzilla",
     name: "Grokzilla.shop",
     host: "grokzilla.shop",
@@ -153,6 +163,16 @@ export const SERVICES = [
     price: "0.05 USDC / crawl",
     crawls24h: 420,
     note: "Listed crawler target. Pay-per-index.",
+  },
+  {
+    id: "svc_dnp",
+    name: "Dragon and Panda",
+    host: "dragonandpanda.life",
+    path: "/",
+    kind: "network",
+    price: "listed",
+    crawls24h: 48,
+    note: "Creative network. The other shop window.",
   },
   {
     id: "svc_agentmail",
@@ -211,6 +231,9 @@ export function wellKnown(origin: string) {
     watches: "/v1/watches",
     agency: "/v1/agency",
     patrol: "/v1/patrol",
+    tape: "/v1/tape",
+    desk: "/desk",
+    llms: "/llms.txt",
     notify: {
       sse: "/v1/stream",
       webhook: "/v1/hooks",

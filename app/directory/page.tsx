@@ -1,17 +1,22 @@
 import type { Metadata } from "next";
 import { PAY_TO, SERVICES, WATCHES } from "@/lib/protocol";
 
-export const metadata: Metadata = { title: "Directory" };
+export const metadata: Metadata = {
+  title: "Directory",
+  description: "Listed Harbinger edges: free tape, agency catalog, Grokzilla.shop, Dragon and Panda, AgentMail rail.",
+  alternates: { canonical: "https://www.x403-harbinger.com/directory" },
+};
 
 export default function DirectoryPage() {
   return (
     <main className="main">
       <section>
-        <p className="tape">GET /v1/index · GET /v1/watches · GET /v1/agency</p>
+        <p className="tape">GET /v1/index · GET /v1/watches · GET /v1/agency · GET /v1/tape</p>
         <h1 className="display">Listed edges and watches</h1>
         <p className="muted">
-          Crawlers index these paths. Discovery is public. The stream is forbidden until grant.
-          The agency book is the durable catalog the swarm patrols.
+          Crawlers index these paths. Discovery is public. The free tape needs no grant. The stream is
+          forbidden until grant. The agency book is the durable catalog the swarm patrols. Grokzilla and
+          Dragon and Panda sit on the same directory so agents can find the rest of the network.
         </p>
         <p className="mono" style={{ marginTop: 12 }}>payTo {PAY_TO}</p>
       </section>

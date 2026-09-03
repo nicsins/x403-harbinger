@@ -78,7 +78,7 @@ A mailbox API key is not a grant.
 
 Publishers MUST serve /.well-known/harbinger as application/vnd.x403.harbinger+json. Crawlers MAY also fetch the alias /.well-known/x403.json, which MUST Link to the canonical document.
 
-Listed endpoints appear at GET /v1/index. Watches appear at GET /v1/watches. The agency catalog appears at GET /v1/agency. Agency discovery is public. POST /v1/patrol is grant-required.
+Listed endpoints appear at GET /v1/index. Watches appear at GET /v1/watches. The agency catalog appears at GET /v1/agency. The free tape appears at GET /v1/tape and the human desk at /desk. Agency discovery and the last print are public. POST /v1/patrol and GET /v1/stream are grant-required.
 
 ## 8. Notify
 
@@ -98,7 +98,7 @@ Two modes. Per ping: charge when the watch fires. Session: one grant covers the 
 
 ## 11. Crawlers
 
-A crawler that presents X-Harbinger-Crawl: 1 and a grant MAY fetch listed paths. Unpaid crawls of grant-required endpoints MUST 403. GET /v1/agency MUST remain crawlable without a grant.
+A crawler that presents X-Harbinger-Crawl: 1 and a grant MAY fetch listed paths. Unpaid crawls of grant-required endpoints MUST 403. GET /v1/agency and GET /v1/tape MUST remain crawlable without a grant.
 
 ## 12. Security considerations
 
