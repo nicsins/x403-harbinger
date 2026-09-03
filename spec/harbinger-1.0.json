@@ -1,0 +1,29 @@
+{
+  "protocol": "x403-HARBINGER/1.0",
+  "name": "Harbinger",
+  "designation": "x403-HARBINGER",
+  "document": "X403-HP-1",
+  "urn": "urn:x403:harbinger:1.0",
+  "status": 403,
+  "meaning": "Forbidden until grant",
+  "media_type": "application/vnd.x403.harbinger+json",
+  "published": "2026-09-02",
+  "category": "Informational",
+  "editors": ["nicsins"],
+  "asset": "USDC",
+  "network": "base",
+  "discovery": "/.well-known/harbinger",
+  "notify": { "sse": "/v1/stream", "webhook": "/v1/hooks" },
+  "headers": {
+    "version": "X-Harbinger-Version",
+    "challenge": "X-Harbinger-Forbidden",
+    "grant": "X-Harbinger-Grant",
+    "receipt": "X-Harbinger-Receipt",
+    "watch": "X-Harbinger-Watch",
+    "event": "X-Harbinger-Event",
+    "score": "X-Harbinger-Correlation",
+    "lead": "X-Harbinger-Advantage-Window",
+    "crawl": "X-Harbinger-Crawl"
+  },
+  "grant": { "scheme": "hp1", "demo": "hp1.demo" }
+}
