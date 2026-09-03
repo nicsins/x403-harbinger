@@ -31,6 +31,7 @@ Implementations MUST speak x403-HARBINGER/1.0 on the version header.
 - Watch: named conditions plus a time window and a bill.
 - Advantage window: estimated lead, in milliseconds, the join usually buys.
 - Crawler: an agent that indexes /.well-known/harbinger and listed paths.
+- Rail: an optional delivery adapter. AgentMail is a rail.
 
 ## 3. Status-code binding
 
@@ -38,11 +39,15 @@ Harbinger binds to HTTP 403. The server understood the request and refuses it un
 
 401 is authentication. 402 is payment-for-a-resource. 403, here, is you are forbidden from this event stream until you hold a Harbinger grant.
 
+Implementations MUST NOT speak HTTP 402 on Harbinger endpoints.
+
 ## 4. Grants
 
 A grant is a bearer token of the form `hp1.<payload>`. The 1.0 reference implementation accepts the published demo grant `hp1.demo` and any token that starts with `hp1.`.
 
 Production deployments MUST reject `hp1.demo`.
+
+A mailbox API key is not a grant.
 
 ## 5. Handshake
 
@@ -65,6 +70,7 @@ Production deployments MUST reject `hp1.demo`.
 | X-Harbinger-Advantage-Window | Lead in ms |
 | X-Harbinger-Crawl | Crawler flag |
 | X-Harbinger-Price | Quoted price |
+| X-Harbinger-Delivery | Rails for this watch (`sse,webhook,agentmail`) |
 
 ## 7. Discovery
 
@@ -82,7 +88,7 @@ A watch is logic `all` or `any` over N conditions inside a window. When it fires
 
 ## 10. Billing
 
-Two modes. Per ping: charge when the watch fires. Session: one grant covers the period, then pings are included. Asset for 1.0 is USDC on Base.
+Two modes. Per ping: charge when the watch fires. Session: one grant covers the period, then pings are included. Asset for 1.0 is USDC on Base. Durable mail copies MAY add a surcharge. The subscriber pays Harbinger, not the mailbox vendor.
 
 ## 11. Crawlers
 
@@ -95,10 +101,35 @@ A crawler that presents X-Harbinger-Crawl: 1 and a grant MAY fetch listed paths.
 - Demo grant hp1.demo is for the reference implementation.
 - Correlation scores are estimates. They are not investment advice.
 - Rate-limit 403s so crawlers cannot probe price cheaply.
+- Do not persist mailbox vendor API keys in the protocol document or in client bundles.
 
 ## 13. IANA considerations
 
 This memo asks for well-known URI “harbinger” and media type application/vnd.x403.harbinger+json. Until assignment, both are used in the x403 tree as specified here.
+
+## 14. AgentMail rail
+
+AgentMail is an optional delivery adapter. It is not the protocol.
+
+A watch MAY list `agentmail` in its delivery set. After settlement the edge MAY send a structured message:
+
+- subject: `HARBINGER · {event} · {watchId}`
+- body: the ping object as text
+- metadata keys: `x-harbinger-protocol`, `x-harbinger-watch`, `x-harbinger-receipt`, `x-harbinger-correlation`, `x-harbinger-advantage-window`
+
+Inbound `message.received` events MAY map to Harbinger prints:
+
+- `mail.received` — any authenticated inbound
+- `mail.received.8k` — subject or body matches a current report / Form 8-K
+
+Those prints MAY join other conditions inside the watch window (for example: 8-K in mail AND an opening gap).
+
+Normative:
+
+- Implementations MUST NOT treat AgentMail credentials as a Harbinger grant.
+- Implementations MUST NOT require AgentMail to implement X403-HP-1.
+- SSE remains the hot path. Mail is the durable copy for sleeping agents.
+- The edge SHOULD expose POST /v1/rails/agentmail as the webhook intake.
 
 ## Citation
 
