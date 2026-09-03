@@ -22,13 +22,13 @@ This is not pay-for-a-resource. It is grant-required notify. It is not x402.
 
 ```
 GET /v1/stream
-X-Harbinger-Watch: w_eth_funding
+X-Harbinger-Watch: w_btc_10_1h
 
 HTTP/1.1 403 Forbidden
 X-Harbinger-Version: x403-HARBINGER/1.0
 X-Harbinger-Forbidden: grant-required
-X-Harbinger-Price: 0.08 USDC
-X-Harbinger-Advantage-Window: 840ms
+X-Harbinger-Price: 0.22 USDC
+X-Harbinger-Advantage-Window: 2400ms
 ```
 
 Retry with:
@@ -39,6 +39,24 @@ X-Harbinger-Grant: hp1.<payload>
 
 Reference demo grant: `hp1.demo`.
 
+## Agency
+
+The agency is a persistent catalog of notification watches a swarm can patrol.
+
+Finance is live: 29 instruments (crypto, G10 FX, equities), 14 named watches, 10 rolling pairs. A watch is a percent-move join over a window — for example bitcoin ±10% in one hour. Scouts pull 7-day hour bars. The joiner scores AND/OR legs. The archivist reports 7-day hit rates. Herald still answers 403 until hp1.
+
+Discovery is public. Live patrol is grant-required.
+
+```
+GET /v1/agency
+POST /v1/patrol
+X-Harbinger-Grant: hp1.demo
+```
+
+News, elections, advertising, and sentiment are reserved lanes. Correlation scores are estimates, not investment advice.
+
+Adjacent swarm-prediction work such as MiroFish is inspiration only. Harbinger sells the join, not a forecast.
+
 ## Discovery
 
 | Path | Role |
@@ -47,9 +65,12 @@ Reference demo grant: `hp1.demo`.
 | `/.well-known/x403.json` | Alias that Links to canonical |
 | `/v1/index` | Listed services |
 | `/v1/watches` | Named watches |
+| `/v1/agency` | Persistent instrument + watch catalog |
+| `/v1/patrol` | Live sweep — 403 until grant |
 | `/v1/stream` | Notify desk — 403 until grant |
 | `/v1/hooks` | Webhook intake |
 | `/v1/rails/agentmail` | Durable mail rail. Not the protocol. |
+| `/agency` | Human desk |
 
 Publishers serve `/.well-known/harbinger` as `application/vnd.x403.harbinger+json`.
 

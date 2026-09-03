@@ -1,3 +1,5 @@
+import { WATCH_BOOK } from "@/lib/agency";
+
 export const PROTOCOL = "x403-HARBINGER/1.0";
 export const DESIGNATION = "x403-HARBINGER";
 export const DOCUMENT = "X403-HP-1";
@@ -39,7 +41,7 @@ export type Watch = {
   hot?: boolean;
 };
 
-export const WATCHES: Watch[] = [
+export const MAIL_WATCHES: Watch[] = [
   {
     id: "w_eth_funding",
     name: "ETH funding spike",
@@ -100,6 +102,27 @@ export const WATCHES: Watch[] = [
   },
 ];
 
+const AGENCY_WATCHES: Watch[] = WATCH_BOOK.map((w) => ({
+  id: w.id,
+  name: w.name,
+  thesis: w.thesis,
+  logic: w.logic,
+  windowMs: w.windowMinutes * 60_000,
+  advantageMs: w.advantageMs,
+  priceUsdc: w.priceUsdc,
+  billing: w.billing,
+  deliveries: w.deliveries,
+  hot: w.hot,
+  conditions: w.legs.map((l) => ({
+    id: l.id,
+    event: l.event,
+    label: l.label,
+    source: "market" as const,
+  })),
+}));
+
+export const WATCHES: Watch[] = [...AGENCY_WATCHES, ...MAIL_WATCHES];
+
 export const SERVICES = [
   {
     id: "svc_harbinger",
@@ -110,6 +133,16 @@ export const SERVICES = [
     price: "0.02–0.22 USDC",
     crawls24h: 1840,
     note: "Grant-required event stream. 403 until hp1.",
+  },
+  {
+    id: "svc_agency",
+    name: "Agency catalog",
+    host: "this-edge",
+    path: "/v1/agency",
+    kind: "catalog",
+    price: "discovery free · patrol grant-required",
+    crawls24h: 96,
+    note: "Persistent watch book. Crypto, FX, equity. Correlation is the product.",
   },
   {
     id: "svc_grokzilla",
@@ -176,6 +209,8 @@ export function wellKnown(origin: string) {
     discovery: "/.well-known/harbinger",
     index: "/v1/index",
     watches: "/v1/watches",
+    agency: "/v1/agency",
+    patrol: "/v1/patrol",
     notify: {
       sse: "/v1/stream",
       webhook: "/v1/hooks",
@@ -232,7 +267,7 @@ export function challengeResponse(watch: Watch): Response {
 
 export function settledPing(watch: Watch) {
   const matched = watch.conditions.map((c) => c.event);
-  return {
+  const ping = {
     protocol: PROTOCOL,
     watchId: watch.id,
     event: matched.join(watch.logic === "all" ? "+" : "|"),
@@ -244,4 +279,5 @@ export function settledPing(watch: Watch) {
     conditions: matched,
     delivery: watch.deliveries,
   };
+  return ping;
 }

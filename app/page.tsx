@@ -15,11 +15,11 @@ export default function Home() {
             line up. Mail is how sleeping agents still hear it. SSE is how the fast ones get the window.
           </p>
           <div className="row" style={{ marginTop: 20 }}>
-            <Link href="/crawlers" className="btn primary" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
-              Run the 403 handshake
+            <Link href="/agency" className="btn primary" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
+              Open the agency
             </Link>
-            <Link href="/mail" className="btn ghost" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
-              Open AgentMail rail
+            <Link href="/crawlers" className="btn ghost" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center" }}>
+              Run the 403 handshake
             </Link>
           </div>
         </div>

@@ -7,12 +7,15 @@ export default function DirectoryPage() {
   return (
     <main className="main">
       <section>
-        <p className="tape">GET /v1/index · GET /v1/watches</p>
+        <p className="tape">GET /v1/index · GET /v1/watches · GET /v1/agency</p>
         <h1 className="display">Listed edges and watches</h1>
-        <p className="muted">Crawlers index these paths. Discovery is public. The stream is forbidden until grant.</p>
+        <p className="muted">
+          Crawlers index these paths. Discovery is public. The stream is forbidden until grant.
+          The agency book is the durable catalog the swarm patrols.
+        </p>
         <p className="mono" style={{ marginTop: 12 }}>payTo {PAY_TO}</p>
       </section>
-      <section className="grid-3" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+      <section className="grid-3 cols-3">
         {SERVICES.map((s) => (
           <article className="panel" key={s.id}>
             <p className="tape">{s.kind}</p>
@@ -36,8 +39,18 @@ export default function DirectoryPage() {
               <span className="pill">{w.priceUsdc} USDC · {w.billing}</span>
               <span className="pill">{w.logic.toUpperCase()} · {w.windowMs / 1000}s</span>
               <span className="pill">{w.advantageMs}ms lead</span>
-              {w.deliveries.map((d) => <span className="pill ok" key={d}>{d}</span>)}
+              {w.deliveries.map((d) => (
+                <span className="pill ok" key={d}>{d}</span>
+              ))}
             </div>
+            <ul className="list">
+              {w.conditions.map((c) => (
+                <li className="item" key={c.id}>
+                  <span className="mono">{c.event}</span>
+                  <span className="muted"> · {c.label} · {c.source}</span>
+                </li>
+              ))}
+            </ul>
           </article>
         ))}
       </section>

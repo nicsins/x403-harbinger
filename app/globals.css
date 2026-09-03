@@ -27,70 +27,135 @@ button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: 0.4; }
 
 .shell { min-height: 100vh; display: flex; flex-direction: column; }
-.bar, .foot { border-color: var(--border); border-style: solid; border-width: 0; }
+.bar, .foot {
+  border-color: var(--border);
+  border-style: solid;
+  border-width: 0;
+}
 .bar { border-bottom-width: 1px; }
 .foot { border-top-width: 1px; color: var(--subtle); font-size: 12px; }
 .wrap { width: min(1120px, calc(100% - 32px)); margin: 0 auto; }
 .bar .wrap, .foot .wrap {
-  display: flex; gap: 12px; padding: 16px 0; align-items: center;
-  justify-content: space-between; flex-wrap: wrap;
+  display: flex;
+  gap: 12px;
+  padding: 16px 0;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
 }
-.nav { display: flex; gap: 4px; overflow-x: auto; }
+.nav { display: flex; gap: 4px; flex-wrap: wrap; }
 .nav a {
-  text-decoration: none; padding: 8px 12px; border-radius: 8px;
-  color: var(--muted); white-space: nowrap; font-size: 14px;
+  text-decoration: none;
+  padding: 8px 12px;
+  border-radius: 8px;
+  color: var(--muted);
+  white-space: nowrap;
+  font-size: 14px;
 }
 .nav a.on, .nav a:hover { background: var(--raised); color: var(--fg); }
 .brand { display: flex; gap: 12px; align-items: baseline; text-decoration: none; }
 .brand strong {
   font-family: "Newsreader", "Times New Roman", serif;
-  font-size: 22px; letter-spacing: -0.03em; font-weight: 500;
+  font-size: 22px;
+  letter-spacing: -0.03em;
+  font-weight: 500;
 }
-.main { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 40px 0 64px; display: grid; gap: 24px; }
+.main { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 40px 0 64px; display: grid; gap: 24px; min-width: 0; overflow-x: hidden; }
 .tape {
   font-family: "IBM Plex Mono", ui-monospace, monospace;
-  font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 .display {
   font-family: "Newsreader", "Times New Roman", serif;
-  letter-spacing: -0.03em; line-height: 1.08; font-weight: 500; margin: 8px 0 0;
+  letter-spacing: -0.03em;
+  line-height: 1.08;
+  font-weight: 500;
+  margin: 8px 0 0;
 }
 h1.display { font-size: clamp(32px, 6vw, 48px); }
 h2.display { font-size: 28px; }
 .muted { color: var(--muted); max-width: 42rem; }
-.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 22px; }
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 22px;
+  min-width: 0;
+}
 .grid-3 { display: grid; gap: 16px; }
+.grid-3.cols-2,
+.grid-3.cols-3,
+.grid-3.cols-4 { grid-template-columns: 1fr; }
 @media (min-width: 800px) {
   .grid-3 { grid-template-columns: 2fr 1fr; }
+  .grid-3.cols-2 { grid-template-columns: 1fr 1fr; }
+  .grid-3.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+  .grid-3.cols-4 { grid-template-columns: repeat(4, 1fr); }
   .span-2 { grid-column: span 2; }
 }
 .row { display: flex; flex-wrap: wrap; gap: 10px; }
 .btn {
-  min-height: 44px; border-radius: 8px; padding: 0 16px;
-  font: 500 14px "IBM Plex Sans", sans-serif; border: 1px solid transparent;
+  min-height: 44px;
+  border-radius: 8px;
+  padding: 0 16px;
+  font: 500 14px "IBM Plex Sans", sans-serif;
+  border: 1px solid transparent;
 }
 .btn.primary { background: var(--primary); color: var(--primary-fg); }
 .btn.ghost { background: transparent; color: var(--fg); border-color: var(--border); }
+.btn.danger { background: var(--danger); color: var(--fg); }
 .pill {
-  display: inline-flex; border: 1px solid var(--border); border-radius: 999px;
-  padding: 2px 8px; font: 11px/1.6 "IBM Plex Mono", monospace; color: var(--muted);
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font: 11px/1.6 "IBM Plex Mono", monospace;
+  color: var(--muted);
 }
-.pill.ok { color: var(--ok); }
-.pill.danger { color: var(--danger); }
+.pill.ok { color: var(--ok); border-color: color-mix(in oklab, var(--ok) 30%, transparent); }
+.pill.danger { color: var(--danger); border-color: color-mix(in oklab, var(--danger) 30%, transparent); }
 .stat .k { margin: 0; }
 .stat .v { margin: 4px 0 0; font-family: "IBM Plex Mono", monospace; font-size: 13px; font-variant-numeric: tabular-nums; }
 .input, select {
-  min-height: 44px; width: 100%; background: var(--raised); color: var(--fg);
-  border: 1px solid var(--border); border-radius: 8px; padding: 0 12px;
+  min-height: 44px;
+  width: 100%;
+  background: var(--raised);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 12px;
   font: 13px "IBM Plex Mono", monospace;
 }
 pre {
-  overflow-x: auto; background: var(--raised); padding: 16px; border-radius: 8px;
-  font: 11px/1.5 "IBM Plex Mono", monospace; color: var(--muted); white-space: pre-wrap;
+  overflow-x: auto;
+  background: var(--raised);
+  padding: 16px;
+  border-radius: 8px;
+  font: 11px/1.5 "IBM Plex Mono", monospace;
+  color: var(--muted);
+  white-space: pre-wrap;
 }
 .list { display: grid; gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; }
 .item { border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
-.mono { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--subtle); }
+.mono { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--subtle); overflow-wrap: anywhere; }
+.table-wrap { overflow-x: auto; margin-top: 12px; max-width: 100%; -webkit-overflow-scrolling: touch; }
+.tape-table { width: 100%; min-width: 560px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.tape-table th {
+  text-align: left; font: 500 11px "IBM Plex Mono", monospace;
+  letter-spacing: 0.08em; text-transform: uppercase; color: var(--subtle); padding: 8px 10px;
+}
+.tape-table td { padding: 12px 10px; border-top: 1px solid var(--border); vertical-align: top; }
+.num-up { color: var(--ok); }
+.num-down { color: var(--danger); }
+.hitbar {
+  width: 72px; height: 4px; border-radius: 99px; background: var(--border);
+  overflow: hidden; margin-bottom: 6px;
+}
+.hitbar > span { display: block; height: 100%; background: var(--primary); }
+.btn.ghost:disabled { opacity: 1; background: var(--raised); }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }

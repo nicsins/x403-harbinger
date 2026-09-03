@@ -5,13 +5,20 @@ import { PROTOCOL } from "@/lib/protocol";
 import { Nav } from "./components/nav";
 
 export const metadata: Metadata = {
-  title: { default: "Harbinger", template: "%s · Harbinger" },
+  metadataBase: new URL("https://www.x403-harbinger.com"),
+  title: {
+    default: "Harbinger",
+    template: "%s · Harbinger",
+  },
   description: "Harbinger (x403-HARBINGER/1.0) — agents notify agents. HTTP 403 until grant.",
   applicationName: "Harbinger",
   robots: { index: true, follow: true },
+  alternates: { canonical: "https://www.x403-harbinger.com" },
 };
 
-export const viewport: Viewport = { themeColor: "#0b0b0c" };
+export const viewport: Viewport = {
+  themeColor: "#0b0b0c",
+};
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
