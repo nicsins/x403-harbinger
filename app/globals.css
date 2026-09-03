@@ -1,0 +1,96 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap");
+
+:root {
+  --bg: #0b0b0c;
+  --surface: #141416;
+  --raised: #1c1c1f;
+  --fg: #eeeee6;
+  --muted: #9c9c94;
+  --subtle: #6e6e68;
+  --primary: #d8d4c8;
+  --primary-fg: #121214;
+  --border: #2a2a2e;
+  --danger: #c45c4a;
+  --ok: #7a9a7e;
+}
+
+* { box-sizing: border-box; }
+html, body { min-height: 100%; background: var(--bg); color: var(--fg); }
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: inherit; }
+button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: 0.4; }
+
+.shell { min-height: 100vh; display: flex; flex-direction: column; }
+.bar, .foot { border-color: var(--border); border-style: solid; border-width: 0; }
+.bar { border-bottom-width: 1px; }
+.foot { border-top-width: 1px; color: var(--subtle); font-size: 12px; }
+.wrap { width: min(1120px, calc(100% - 32px)); margin: 0 auto; }
+.bar .wrap, .foot .wrap {
+  display: flex; gap: 12px; padding: 16px 0; align-items: center;
+  justify-content: space-between; flex-wrap: wrap;
+}
+.nav { display: flex; gap: 4px; overflow-x: auto; }
+.nav a {
+  text-decoration: none; padding: 8px 12px; border-radius: 8px;
+  color: var(--muted); white-space: nowrap; font-size: 14px;
+}
+.nav a.on, .nav a:hover { background: var(--raised); color: var(--fg); }
+.brand { display: flex; gap: 12px; align-items: baseline; text-decoration: none; }
+.brand strong {
+  font-family: "Newsreader", "Times New Roman", serif;
+  font-size: 22px; letter-spacing: -0.03em; font-weight: 500;
+}
+.main { width: min(1120px, calc(100% - 32px)); margin: 0 auto; padding: 40px 0 64px; display: grid; gap: 24px; }
+.tape {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted);
+}
+.display {
+  font-family: "Newsreader", "Times New Roman", serif;
+  letter-spacing: -0.03em; line-height: 1.08; font-weight: 500; margin: 8px 0 0;
+}
+h1.display { font-size: clamp(32px, 6vw, 48px); }
+h2.display { font-size: 28px; }
+.muted { color: var(--muted); max-width: 42rem; }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 22px; }
+.grid-3 { display: grid; gap: 16px; }
+@media (min-width: 800px) {
+  .grid-3 { grid-template-columns: 2fr 1fr; }
+  .span-2 { grid-column: span 2; }
+}
+.row { display: flex; flex-wrap: wrap; gap: 10px; }
+.btn {
+  min-height: 44px; border-radius: 8px; padding: 0 16px;
+  font: 500 14px "IBM Plex Sans", sans-serif; border: 1px solid transparent;
+}
+.btn.primary { background: var(--primary); color: var(--primary-fg); }
+.btn.ghost { background: transparent; color: var(--fg); border-color: var(--border); }
+.pill {
+  display: inline-flex; border: 1px solid var(--border); border-radius: 999px;
+  padding: 2px 8px; font: 11px/1.6 "IBM Plex Mono", monospace; color: var(--muted);
+}
+.pill.ok { color: var(--ok); }
+.pill.danger { color: var(--danger); }
+.stat .k { margin: 0; }
+.stat .v { margin: 4px 0 0; font-family: "IBM Plex Mono", monospace; font-size: 13px; font-variant-numeric: tabular-nums; }
+.input, select {
+  min-height: 44px; width: 100%; background: var(--raised); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 8px; padding: 0 12px;
+  font: 13px "IBM Plex Mono", monospace;
+}
+pre {
+  overflow-x: auto; background: var(--raised); padding: 16px; border-radius: 8px;
+  font: 11px/1.5 "IBM Plex Mono", monospace; color: var(--muted); white-space: pre-wrap;
+}
+.list { display: grid; gap: 8px; margin: 12px 0 0; padding: 0; list-style: none; }
+.item { border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+.mono { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--subtle); }
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
