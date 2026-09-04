@@ -1,0 +1,79 @@
+schema: paperclip/v1
+paused: true
+agents:
+  ceo:
+    adapter:
+      type: cursor
+    paused: true
+  hermes:
+    adapter:
+      type: hermes_local
+    paused: true
+    inputs:
+      env:
+        NOTION_TOKEN:
+          kind: secret
+          requirement: required
+  cto:
+    adapter:
+      type: cursor
+    paused: true
+  harbinger-engineer:
+    adapter:
+      type: cursor
+    paused: true
+  marketplace-engineer:
+    adapter:
+      type: cursor
+    paused: true
+  correlation-quant:
+    adapter:
+      type: cursor
+    paused: true
+  data-core:
+    adapter:
+      type: cursor
+    paused: true
+    inputs:
+      env:
+        NEON_DATABASE_URL:
+          kind: secret
+          requirement: optional
+  protocol-qa:
+    adapter:
+      type: process
+    paused: true
+  growth:
+    adapter:
+      type: cursor
+    paused: true
+  rails:
+    adapter:
+      type: cursor
+    paused: true
+    inputs:
+      env:
+        AGENTMAIL_API_KEY:
+          kind: secret
+          requirement: optional
+  edge-designer:
+    adapter:
+      type: cursor
+    paused: true
+  devops:
+    adapter:
+      type: cursor
+    paused: true
+    inputs:
+      env:
+        VERCEL_TOKEN:
+          kind: secret
+          requirement: optional
+routines:
+  weekday-lightning:
+    agent: hermes
+    paused: true
+    triggers:
+      - kind: schedule
+        cronExpression: "0 8 * * 1-5"
+        timezone: America/Chicago
