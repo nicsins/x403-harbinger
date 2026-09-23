@@ -234,6 +234,9 @@ export function wellKnown(origin: string) {
     tape: "/v1/tape",
     desk: "/desk",
     llms: "/llms.txt",
+    brand: "/brand/MARK.md",
+    avatar: "/brand/harbinger-avatar.jpg",
+    context: "/v1/context",
     notify: {
       sse: "/v1/stream",
       webhook: "/v1/hooks",

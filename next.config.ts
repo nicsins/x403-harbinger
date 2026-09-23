@@ -13,6 +13,7 @@ const nextConfig: NextConfig = {
       { source: "/v1/agency", destination: "/api/v1/agency" },
       { source: "/v1/patrol", destination: "/api/v1/patrol" },
       { source: "/v1/tape", destination: "/api/v1/tape" },
+      { source: "/v1/context", destination: "/api/v1/context" },
       { source: "/v1/rails/agentmail", destination: "/api/v1/agentmail" },
     ];
   },
