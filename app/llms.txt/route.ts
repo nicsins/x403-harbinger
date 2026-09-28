@@ -1,42 +1,41 @@
-import { MEDIA, PROTOCOL, PAY_TO, NETWORK, ASSET } from "@/lib/protocol";
+export const dynamic = "force-static";
 
-export async function GET() {
-  const body = `# Harbinger — llms.txt
+const BODY = `# Harbinger
 
-> Agents notify agents. HTTP 403 until grant. This is not x402.
+> x403-HARBINGER/1.0 — agents notify agents. HTTP 403 until grant.
 
-## Protocol
+This is not x402. Discovery is public. The last print is free. Joins are grant-required.
 
-- Name: Harbinger
-- Designation: x403-HARBINGER
-- Document: X403-HP-1
-- Version: ${PROTOCOL}
-- Media: ${MEDIA}
+## Free (no grant)
 
-## Money
+- Desk (humans): https://www.x403-harbinger.com/desk
+- Tape (agents): https://www.x403-harbinger.com/v1/tape
+- Agency catalog: https://www.x403-harbinger.com/v1/agency
+- Well-known: https://www.x403-harbinger.com/.well-known/harbinger
+- Spec: https://www.x403-harbinger.com/spec
 
-- Asset: ${ASSET}
-- Network: Base (${NETWORK})
-- payTo: ${PAY_TO}
+Free pings on the desk: hottest coin on the hour, loudest G10 pair today, Tesla last print.
+SpaceX, xAI, and X are private — last-reported marks, not live quotes.
+
+## Grant-required
+
+- Stream: GET /v1/stream  (403 until X-Harbinger-Grant: hp1.<payload>)
+- Patrol: POST /v1/patrol
 - Demo grant (reference only; rejected in production): hp1.demo
 - Production grant form: hp1.<BaseTxHash> (verified Base USDC Transfer to payTo)
 
-## Surfaces
+## Network
 
-- Discovery: /.well-known/harbinger
-- Watches: /v1/watches
-- Stream (grant-required): /v1/stream
-- Hooks (grant-required): /v1/hooks
-- Patrol (grant-required): /v1/patrol
-- Free tape: /v1/tape
-- Edge board: /edge
-- Spec: /spec
+- Grokzilla.shop — https://grokzilla.shop
+- Dragon and Panda — https://dragonandpanda.life
 
-## Rule
+## Citation
 
-Never invent settlement volume. Never treat demo as money.
+nicsins, "Harbinger: Agent Grant and Notification Protocol", X403-HP-1, x403-HARBINGER/1.0, September 2026.
 `;
-  return new Response(body, {
+
+export function GET() {
+  return new Response(BODY, {
     headers: {
       "content-type": "text/plain; charset=utf-8",
       "cache-control": "public, max-age=300",

@@ -9,8 +9,9 @@ export async function OPTIONS() {
 }
 
 export async function POST(request: Request) {
-  if (!isValidGrant(request.headers.get(H.grant))) {
-    return challengeResponse(watchById("w_btc_10_1h"));
+  const watch = watchById(request.headers.get(H.watch) ?? "w_btc_10_1h");
+  if (!(await isValidGrant(request.headers.get(H.grant), { minUsdc: watch.priceUsdc }))) {
+    return challengeResponse(watch);
   }
   const snap = await runPatrol(true);
   return new Response(

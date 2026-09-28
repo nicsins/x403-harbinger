@@ -1,4 +1,4 @@
-import { H, MEDIA, PROTOCOL, corsHeaders, challengeResponse, isValidGrant, settledPing, watchById } from "@/lib/protocol";
+import { H, MEDIA, PROTOCOL, corsHeaders, challengeResponse, isValidGrant, parseTxGrant, settledPing, watchById } from "@/lib/protocol";
 
 export const dynamic = "force-dynamic";
 
@@ -10,9 +10,10 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const watch = watchById(request.headers.get(H.watch) ?? url.searchParams.get("watch"));
   const grant = request.headers.get(H.grant);
-  if (!isValidGrant(grant)) return challengeResponse(watch);
+  if (!(await isValidGrant(grant, { minUsdc: watch.priceUsdc }))) return challengeResponse(watch);
 
-  const ping = settledPing(watch);
+  const txRef = grant ? parseTxGrant(grant) : null;
+  const ping = settledPing(watch, txRef);
   const headers: Record<string, string> = {
     ...corsHeaders(),
     [H.version]: PROTOCOL,

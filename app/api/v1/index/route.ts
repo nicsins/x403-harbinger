@@ -5,7 +5,7 @@ export async function OPTIONS() {
 }
 
 export async function GET(request: Request) {
-  if (request.headers.get(H.crawl) === "1" && !isValidGrant(request.headers.get(H.grant))) {
+  if (request.headers.get(H.crawl) === "1" && !(await isValidGrant(request.headers.get(H.grant)))) {
     return challengeResponse(watchById(null));
   }
   return new Response(JSON.stringify({ protocol: PROTOCOL, services: SERVICES }, null, 2), {
