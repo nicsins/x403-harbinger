@@ -1,40 +1,42 @@
-export const dynamic = "force-static";
+import { MEDIA, PROTOCOL, PAY_TO, NETWORK, ASSET } from "@/lib/protocol";
 
-const BODY = `# Harbinger
+export async function GET() {
+  const body = `# Harbinger — llms.txt
 
-> x403-HARBINGER/1.0 — agents notify agents. HTTP 403 until grant.
+> Agents notify agents. HTTP 403 until grant. This is not x402.
 
-This is not x402. Discovery is public. The last print is free. Joins are grant-required.
+## Protocol
 
-## Free (no grant)
+- Name: Harbinger
+- Designation: x403-HARBINGER
+- Document: X403-HP-1
+- Version: ${PROTOCOL}
+- Media: ${MEDIA}
 
-- Desk (humans): https://www.x403-harbinger.com/desk
-- Tape (agents): https://www.x403-harbinger.com/v1/tape
-- Agency catalog: https://www.x403-harbinger.com/v1/agency
-- Well-known: https://www.x403-harbinger.com/.well-known/harbinger
-- Spec: https://www.x403-harbinger.com/spec
+## Money
 
-Free pings on the desk: hottest coin on the hour, loudest G10 pair today, Tesla last print.
-SpaceX, xAI, and X are private — last-reported marks, not live quotes.
+- Asset: ${ASSET}
+- Network: Base (${NETWORK})
+- payTo: ${PAY_TO}
+- Demo grant (reference only; rejected in production): hp1.demo
+- Production grant form: hp1.<BaseTxHash> (verified Base USDC Transfer to payTo)
 
-## Grant-required
+## Surfaces
 
-- Stream: GET /v1/stream  (403 until X-Harbinger-Grant: hp1.<payload>)
-- Patrol: POST /v1/patrol
-- Demo grant (reference only): hp1.demo
+- Discovery: /.well-known/harbinger
+- Watches: /v1/watches
+- Stream (grant-required): /v1/stream
+- Hooks (grant-required): /v1/hooks
+- Patrol (grant-required): /v1/patrol
+- Free tape: /v1/tape
+- Edge board: /edge
+- Spec: /spec
 
-## Network
+## Rule
 
-- Grokzilla.shop — https://grokzilla.shop
-- Dragon and Panda — https://dragonandpanda.life
-
-## Citation
-
-nicsins, "Harbinger: Agent Grant and Notification Protocol", X403-HP-1, x403-HARBINGER/1.0, September 2026.
+Never invent settlement volume. Never treat demo as money.
 `;
-
-export function GET() {
-  return new Response(BODY, {
+  return new Response(body, {
     headers: {
       "content-type": "text/plain; charset=utf-8",
       "cache-control": "public, max-age=300",
