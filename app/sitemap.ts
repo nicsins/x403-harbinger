@@ -5,6 +5,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const rows: Array<{ path: string; freq: MetadataRoute.Sitemap[number]["changeFrequency"]; priority: number }> = [
     { path: "", freq: "daily", priority: 1 },
     { path: "/desk", freq: "hourly", priority: 0.95 },
+    { path: "/edge", freq: "hourly", priority: 0.9 },
     { path: "/agency", freq: "hourly", priority: 0.9 },
     { path: "/spec", freq: "weekly", priority: 0.8 },
     { path: "/directory", freq: "daily", priority: 0.75 },
