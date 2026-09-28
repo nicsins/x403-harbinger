@@ -1,5 +1,25 @@
 import { WATCH_BOOK } from "@/lib/agency";
 
+import {
+  isValidGrant as _isValidGrant,
+  parseTxGrant,
+  allowDemoGrant,
+  verifyBaseUsdcGrant,
+  MIN_GRANT_USDC,
+  USDC_BASE,
+  grantAdvert,
+  type GrantOpts,
+} from "@/lib/grant";
+
+export async function isValidGrant(
+  raw: string | null | undefined,
+  opts?: GrantOpts,
+): Promise<boolean> {
+  return _isValidGrant(raw, opts);
+}
+export { parseTxGrant, allowDemoGrant, verifyBaseUsdcGrant, MIN_GRANT_USDC, USDC_BASE, grantAdvert };
+export type { GrantOpts };
+
 export const PROTOCOL = "x403-HARBINGER/1.0";
 export const DESIGNATION = "x403-HARBINGER";
 export const DOCUMENT = "X403-HP-1";
@@ -10,9 +30,6 @@ export const ASSET = "USDC";
 export const NETWORK = "eip155:8453";
 export const NETWORK_NAME = "base";
 export const PAY_TO = "0xDa1Eab46918882f8656a41cF9fCa80e2415369d1";
-export const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
-export const TRANSFER_TOPIC0 = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
-export const MIN_GRANT_USDC = 0.02;
 
 export const H = {
   version: "X-Harbinger-Version",
@@ -79,7 +96,7 @@ export const MAIL_WATCHES: Watch[] = [
   {
     id: "w_sec_mail",
     name: "8-K in mail AND gap",
-    thesis: "An 8-K lands in the agent inbox and the name gaps. Mail is the source. The book is the confirm.",
+    thesis: "An 8-K lands in the agent's inbox and the name gaps. Mail is the source. The book is the confirm.",
     logic: "all",
     windowMs: 90_000,
     advantageMs: 4_200,
@@ -104,3 +121,205 @@ export const MAIL_WATCHES: Watch[] = [
     conditions: [{ id: "c_mail", event: "mail.received", label: "AgentMail inbound", source: "agentmail" }],
   },
 ];
+
+const AGENCY_WATCHES: Watch[] = WATCH_BOOK.map((w) => ({
+  id: w.id,
+  name: w.name,
+  thesis: w.thesis,
+  logic: w.logic,
+  windowMs: w.windowMinutes * 60_000,
+  advantageMs: w.advantageMs,
+  priceUsdc: w.priceUsdc,
+  billing: w.billing,
+  deliveries: w.deliveries,
+  hot: w.hot,
+  conditions: w.legs.map((l) => ({
+    id: l.id,
+    event: l.event,
+    label: l.label,
+    source: "market" as const,
+  })),
+}));
+
+export const WATCHES: Watch[] = [...AGENCY_WATCHES, ...MAIL_WATCHES];
+
+export const SERVICES = [
+  {
+    id: "svc_harbinger",
+    name: "Harbinger notify desk",
+    host: "this-edge",
+    path: "/v1/stream",
+    kind: "notify",
+    price: "0.02-0.22 USDC",
+    crawls24h: 1840,
+    note: "Grant-required event stream. 403 until hp1.",
+  },
+  {
+    id: "svc_agency",
+    name: "Agency catalog",
+    host: "this-edge",
+    path: "/v1/agency",
+    kind: "catalog",
+    price: "discovery free / patrol grant-required",
+    crawls24h: 96,
+    note: "Persistent watch book. Crypto, FX, equity. Correlation is the product.",
+  },
+  {
+    id: "svc_tape",
+    name: "Free tape",
+    host: "this-edge",
+    path: "/v1/tape",
+    kind: "desk",
+    price: "free last print",
+    crawls24h: 240,
+    note: "Public movers. Hot coins, G10, Tesla. No grant.",
+  },
+  {
+    id: "svc_grokzilla",
+    name: "Grokzilla.shop",
+    host: "grokzilla.shop",
+    path: "/.well-known/harbinger",
+    kind: "crawler",
+    price: "0.05 USDC / crawl",
+    crawls24h: 420,
+    note: "Listed crawler target. Pay-per-index.",
+  },
+  {
+    id: "svc_dnp",
+    name: "Dragon and Panda",
+    host: "dragonandpanda.life",
+    path: "/",
+    kind: "network",
+    price: "listed",
+    crawls24h: 48,
+    note: "Creative network. The other shop window.",
+  },
+  {
+    id: "svc_agentmail",
+    name: "AgentMail rail",
+    host: "agentmail.to",
+    path: "/v1/rails/agentmail",
+    kind: "rail",
+    price: "surcharge 0.01 USDC",
+    crawls24h: 96,
+    note: "Durable delivery. Sleeping agents still get the ping.",
+  },
+];
+
+export function watchById(id: string | null | undefined): Watch {
+  return WATCHES.find((w) => w.id === id) ?? WATCHES[0]!;
+}
+
+export function mintReceipt(watchId: string, txRef?: string | null): string {
+  const short = txRef ? `.${txRef.replace(/^0x/i, "").slice(0, 8)}` : "";
+  return `rcpt.${watchId}${short}.${Math.random().toString(16).slice(2, 10)}`;
+}
+
+export function corsHeaders() {
+  const expose = Object.values(H).join(", ");
+  return {
+    "access-control-allow-origin": "*",
+    "access-control-allow-headers": `${expose}, content-type`,
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-expose-headers": expose,
+  };
+}
+
+export function wellKnown(origin: string) {
+  return {
+    protocol: PROTOCOL,
+    name: "Harbinger",
+    designation: DESIGNATION,
+    document: DOCUMENT,
+    urn: URN,
+    status: 403,
+    meaning: "Forbidden until grant",
+    media_type: MEDIA,
+    published: "2026-09-02",
+    editors: ["nicsins"],
+    asset: ASSET,
+    network: NETWORK_NAME,
+    chain: NETWORK,
+    payTo: PAY_TO,
+    discovery: "/.well-known/harbinger",
+    index: "/v1/index",
+    watches: "/v1/watches",
+    agency: "/v1/agency",
+    patrol: "/v1/patrol",
+    tape: "/v1/tape",
+    desk: "/desk",
+    llms: "/llms.txt",
+    brand: "/brand/MARK.md",
+    avatar: "/brand/harbinger-avatar.jpg",
+    context: "/v1/context",
+    notify: {
+      sse: "/v1/stream",
+      webhook: "/v1/hooks",
+      agentmail: {
+        rail: "agentmail",
+        webhook: "/v1/rails/agentmail",
+        note: "Durable copy for sleeping agents. Not the hot path. Not x402.",
+      },
+    },
+    headers: H,
+    grant: grantAdvert(H.grant),
+    spec: `${origin}/spec`,
+    citation:
+      'nicsins, "Harbinger: Agent Grant and Notification Protocol", X403-HP-1, x403-HARBINGER/1.0, September 2026.',
+  };
+}
+
+export function challengeResponse(watch: Watch): Response {
+  const event = watch.conditions.map((c) => c.event).join(watch.logic === "all" ? " AND " : " OR ");
+  const body = {
+    protocol: PROTOCOL,
+    document: DOCUMENT,
+    urn: URN,
+    status: 403,
+    forbidden: "grant-required",
+    meaning: "Forbidden from this event stream until a Harbinger grant is presented.",
+    watch: watch.id,
+    event,
+    price: `${watch.priceUsdc} ${ASSET}`,
+    billing: watch.billing,
+    advantageWindow: `${watch.advantageMs}ms`,
+    asset: ASSET,
+    network: NETWORK,
+    payTo: PAY_TO,
+    grant: grantAdvert(H.grant),
+    delivery: watch.deliveries,
+  };
+  return new Response(JSON.stringify(body, null, 2), {
+    status: 403,
+    headers: {
+      "content-type": MEDIA,
+      ...corsHeaders(),
+      [H.version]: PROTOCOL,
+      [H.forbidden]: "grant-required",
+      [H.watch]: watch.id,
+      [H.event]: event,
+      [H.price]: body.price,
+      [H.advantage]: String(watch.advantageMs),
+      [H.delivery]: watch.deliveries.join(","),
+      "cache-control": "no-store",
+    },
+  });
+}
+
+export function settledPing(watch: Watch, txRef?: string | null) {
+  const matched = watch.conditions.map((c) => c.event);
+  const ping = {
+    protocol: PROTOCOL,
+    watchId: watch.id,
+    event: matched.join(watch.logic === "all" ? "+" : "|"),
+    correlation: 0.99,
+    advantageMs: watch.advantageMs,
+    priceUsdc: watch.priceUsdc,
+    receipt: mintReceipt(watch.id, txRef),
+    firedAt: new Date().toISOString(),
+    conditions: matched,
+    delivery: watch.deliveries,
+    ...(txRef ? { settleTx: txRef } : {}),
+  };
+  return ping;
+}
