@@ -158,6 +158,7 @@ export type GrantDenyReason =
   | "grant-bound-to-other-watch"
   | "grant-expired"
   | "grant-exhausted"
+  | "grant-reserved"
   | "watch-required"
   | "unknown-watch"
   | "grant-store-unavailable";
@@ -165,7 +166,7 @@ export type GrantDenyReason =
 export type GrantCheck =
   | { ok: true; kind: "demo" }
   | { ok: true; kind: "tx"; txHash: string; binding: GrantBinding }
-  | { ok: false; status: 400 | 403 | 503; reason: GrantDenyReason; txHash?: string; binding?: GrantBinding };
+  | { ok: false; status: 400 | 403 | 409 | 503; reason: GrantDenyReason; txHash?: string; binding?: GrantBinding };
 
 export type CheckGrantOpts = {
   /** Count this request against quota. Stream polls and hook registration pass false.
@@ -177,7 +178,7 @@ export type CheckGrantOpts = {
 };
 
 const deny = (
-  status: 400 | 403 | 503,
+  status: 400 | 403 | 409 | 503,
   reason: GrantDenyReason,
   extra?: { txHash?: string; binding?: GrantBinding },
 ): GrantCheck => ({ ok: false, status, reason, ...extra });
@@ -224,6 +225,7 @@ export async function checkGrant(
         watchId: watch.id,
         quota: grantQuota(watch, paid),
         used: 0,
+        reserved: 0,
         boundAt: now,
         expiresAt: now + policy.ttlMs,
         paidAtomic: paid.toString(),
@@ -231,6 +233,9 @@ export async function checkGrant(
     }
     const r = await store.redeem(tx, watch.id, now, opts.consume, proposal);
     if (r.ok) return { ok: true, kind: "tx", txHash: tx, binding: r.binding };
+    if (r.reason === "reserved") {
+      return deny(409, "grant-reserved", { txHash: tx, ...(r.binding ? { binding: r.binding } : {}) });
+    }
     const reason: GrantDenyReason =
       r.reason === "watch-mismatch"
         ? "grant-bound-to-other-watch"
