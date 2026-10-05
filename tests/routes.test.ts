@@ -55,18 +55,32 @@ describe("GET /v1/stream", () => {
     assert.equal(r.status, 400);
     assert.equal(((await r.json()) as { error: string }).error, "unknown-watch");
   });
-  test("real grant -> 200 once on w_btc_10_1h, then replay 403, other watch 403", async () => {
+  test("real grant arms w_btc_10_1h without spending, then another watch is 403", async () => {
     const ok = await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") });
     assert.equal(ok.status, 200);
-    const body = (await ok.json()) as { watchId: string; settleTx: string; receipt: string; grant: { used: number; quota: number } };
+    const body = (await ok.json()) as {
+      status: string;
+      watchId: string;
+      settleTx: string;
+      firedAt: null;
+      correlation: number | null;
+      grant: { used: number; quota: number };
+      monitorId: string;
+    };
+    assert.equal(body.status, "pending");
     assert.equal(body.watchId, "w_btc_10_1h");
     assert.equal(body.settleTx, REAL_TX);
-    assert.match(body.receipt, /^rcpt\.w_btc_10_1h\.c3fd6b6f\./);
-    assert.deepEqual([body.grant.used, body.grant.quota], [1, 1]);
+    assert.equal(body.firedAt, null);
+    assert.equal(body.correlation, null);
+    assert.notEqual(body.correlation, 0.99);
+    assert.deepEqual([body.grant.used, body.grant.quota], [0, 1]);
 
-    const replay = await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") });
-    assert.equal(replay.status, 403);
-    assert.equal(replay.headers.get("X-Harbinger-Forbidden"), "grant-exhausted");
+    const again = await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") });
+    assert.equal(again.status, 200);
+    const replay = (await again.json()) as { status: string; monitorId: string; grant: { used: number } };
+    assert.equal(replay.status, "pending");
+    assert.equal(replay.monitorId, body.monitorId);
+    assert.equal(replay.grant.used, 0);
 
     const other = await stream({ ...G(REAL_TX), ...W("w_btc_5_1h") });
     assert.equal(other.status, 403);
@@ -110,14 +124,24 @@ describe("POST /v1/hooks", () => {
   test("valid grant, unknown watchId in body -> 400", async () => {
     assert.equal((await hooks(G(REAL_TX), { watchId: "w_nope" })).status, 400);
   });
-  test("fresh hook registration consumes its one ping and exhausted replay is refused", async () => {
+  test("hook registration does not consume; a spent grant is still refused", async () => {
     const a = await hooks({ ...G(REAL_TX), ...W("w_btc_10_1h") });
     assert.equal(a.status, 200);
     assert.deepEqual(await a.json(), { protocol: "x403-HARBINGER/1.0", accepted: true, watchId: "w_btc_10_1h" });
+    const again = await hooks({ ...G(REAL_TX), ...W("w_btc_10_1h") });
+    assert.equal(again.status, 200);
+    const armed = await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") });
+    assert.equal(armed.status, 200);
+    assert.equal(((await armed.json()) as { grant: { used: number } }).grant.used, 0);
+
+    const patrol = await patrolPOST(new Request(`${BASE}/v1/patrol`, { method: "POST", headers: G(REAL_TX) }));
+    assert.equal(patrol.status, 200);
     const exhausted = await hooks({ ...G(REAL_TX), ...W("w_btc_10_1h") });
     assert.equal(exhausted.status, 403);
     assert.equal(exhausted.headers.get("X-Harbinger-Forbidden"), "grant-exhausted");
-    assert.equal((await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") })).status, 403);
+    const repeat = await hooks({ ...G(REAL_TX), ...W("w_btc_10_1h") });
+    assert.equal(repeat.status, 403);
+    assert.equal(repeat.headers.get("X-Harbinger-Forbidden"), "grant-exhausted");
   });
   test("hook registration rejects a grant bound to another watch", async () => {
     assert.equal((await hooks({ ...G(REAL_TX), ...W("w_btc_10_1h") })).status, 200);
@@ -133,13 +157,16 @@ describe("POST /v1/hooks", () => {
 });
 
 describe("patrol + agentmail send share the gate", () => {
-  test("patrol unpaid 403; demo 403 on prod; tx grant bound to the stream watch is refused for patrol's default once spent", async () => {
+  test("patrol unpaid 403; demo 403 on prod; stream arm does not spend, patrol does", async () => {
     const p = (h: Record<string, string>) => patrolPOST(new Request(`${BASE}/v1/patrol`, { method: "POST", headers: h }));
     assert.equal((await p({})).status, 403);
     assert.equal((await p({ "X-Harbinger-Grant": "hp1.demo" })).status, 403);
-    assert.equal((await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") })).status, 200);
-    assert.equal((await p(G(REAL_TX))).status, 403); // default watch w_btc_10_1h, quota spent
-    assert.equal((await p({ ...G(REAL_TX), ...W("w_btc_5_1h") })).status, 403); // bound elsewhere
+    const armed = await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") });
+    assert.equal(armed.status, 200);
+    assert.equal(((await armed.json()) as { grant: { used: number } }).grant.used, 0);
+    assert.equal((await p(G(REAL_TX))).status, 200);
+    assert.equal((await p(G(REAL_TX))).status, 403);
+    assert.equal((await p({ ...G(REAL_TX), ...W("w_btc_5_1h") })).status, 403);
   });
   test("agentmail send: missing watch 400, replay 403", async () => {
     const send = (body: Record<string, unknown>) =>
