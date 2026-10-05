@@ -7,7 +7,7 @@ export const FAKE_TX = "0x" + "ab".repeat(32);
 export const PAY_TO_TOPIC = "0x000000000000000000000000da1eab46918882f8656a41cf9fca80e2415369d1";
 export const OTHER_TOPIC = "0x0000000000000000000000001111111111111111111111111111111111111111";
 export const PAYER_TOPIC = "0x000000000000000000000000708755c5f9ec60ab416d956e1ed3c15775372b52";
-export const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bdA02913".toLowerCase();
+export const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
 export const TOPIC0 = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
 export function fixture(tx: string): unknown {
