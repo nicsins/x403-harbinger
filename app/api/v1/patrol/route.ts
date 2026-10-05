@@ -1,5 +1,6 @@
 import { H, MEDIA, PROTOCOL, corsHeaders, gateGrant } from "@/lib/protocol";
 import { runPatrol } from "@/lib/patrol";
+import { monitorNow, pendingReservation } from "@/lib/monitor";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -11,7 +12,25 @@ export async function OPTIONS() {
 export async function POST(request: Request) {
   // Patrol sweeps the whole book; it keeps its documented default watch for pricing,
   // but the tx grant is still bound to that watch and consumes one use.
-  const gate = await gateGrant(request.headers.get(H.grant), request.headers.get(H.watch) ?? "w_btc_10_1h", {
+  const watchId = request.headers.get(H.watch) ?? "w_btc_10_1h";
+  // Stopgap until full quota reservation: a pending ping on this grant + watch
+  // holds the unit, so patrol refuses before anything is consumed.
+  const held = await pendingReservation(request.headers.get(H.grant), watchId, monitorNow());
+  if (held) {
+    return new Response(
+      JSON.stringify({
+        protocol: PROTOCOL,
+        status: 409,
+        error: "grant-reserved",
+        meaning: "A paid ping on this grant and watch is still pending. Patrol would spend the unit it is holding.",
+        watch: watchId,
+        monitorId: held.id,
+        deadlineAt: new Date(held.deadlineAt).toISOString(),
+      }),
+      { status: 409, headers: { "content-type": MEDIA, [H.version]: PROTOCOL, [H.forbidden]: "grant-reserved", ...corsHeaders() } },
+    );
+  }
+  const gate = await gateGrant(request.headers.get(H.grant), watchId, {
     consume: true,
   });
   if (!gate.ok) return gate.response;

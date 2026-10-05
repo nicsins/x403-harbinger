@@ -13,7 +13,11 @@
  * - In-memory (dev/preview fallback). Process-local: replay is possible across
  *   serverless instances, so production refuses it unless GRANT_STORE=memory is set
  *   explicitly (see grantStoreFromEnv).
+ *
+ * Keys are namespaced per environment (lib/store-keys.ts): prod un-prefixed,
+ * preview/dev under `preview:` / `dev:`.
  */
+import { storeKeys } from "@/lib/store-keys";
 
 export type GrantBinding = {
   watchId: string;
@@ -120,7 +124,7 @@ export class UpstashGrantStore implements GrantStore {
   constructor(
     private readonly url: string,
     private readonly token: string,
-    private readonly prefix = "harbinger:grant:",
+    private readonly prefix = storeKeys().grant,
   ) {}
 
   private async cmd(args: (string | number)[]): Promise<unknown> {
@@ -180,7 +184,7 @@ type Env = Record<string, string | undefined>;
 export function grantStoreFromEnv(env: Env = process.env): GrantStore | null {
   const url = env.KV_REST_API_URL || env.UPSTASH_REDIS_REST_URL;
   const token = env.KV_REST_API_TOKEN || env.UPSTASH_REDIS_REST_TOKEN;
-  if (url && token) return new UpstashGrantStore(url, token);
+  if (url && token) return new UpstashGrantStore(url, token, storeKeys(env).grant);
   if (env.VERCEL_ENV === "production" && env.GRANT_STORE !== "memory") return null;
   return sharedMemoryStore();
 }
