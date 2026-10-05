@@ -10,12 +10,8 @@
  */
 import { createHash } from "node:crypto";
 import type { PriceSample } from "@/lib/trigger";
+import { storeKeys, type StoreKeys } from "@/lib/store-keys";
 
-export const GRANT_KEY_PREFIX = "harbinger:grant:";
-const MONITOR_PREFIX = "harbinger:monitor:";
-const INDEX_PREFIX = "harbinger:monitor-idx:";
-const PENDING_KEY = "harbinger:monitor-pending";
-const OUTBOX_KEY = "harbinger:monitor-outbox";
 
 export type HookState = "armed" | "queued" | "inflight" | "delivered" | "skipped" | "dead";
 
@@ -123,10 +119,23 @@ function patchFired(next: Monitor, grant: GrantSnap | undefined, demo: boolean):
   };
 }
 
+/** Free re-arms after a no-move allowed per tx grant. */
+export const REARM_LIMIT = 3;
+/** Generation 1 is the first arm; each later generation is one free re-arm. */
+export const MAX_GENERATION = 1 + REARM_LIMIT;
+
+/**
+ * Store-side create guard (mirrored in CREATE_LUA, atomic on Upstash).
+ * Returns the monitor to keep, or null to write `incoming`.
+ * A new generation may only follow a no-move, and a tx grant stops at
+ * MAX_GENERATION. The shared demo monitor is not capped.
+ */
 function acceptCreate(prev: Monitor | null, incoming: Monitor): Monitor | null {
   if (!prev) return null;
   if (prev.status === "pending") return prev;
   if (prev.generation >= incoming.generation) return prev;
+  if (prev.status !== "no-move") return prev;
+  if (incoming.grantKey !== "demo" && incoming.generation > MAX_GENERATION) return prev;
   return null;
 }
 
@@ -350,6 +359,8 @@ if existing and existing ~= '' then
     if prev.status == 'pending' or tonumber(idx.generation) >= tonumber(incoming.generation) then
       return raw
     end
+    if prev.status ~= 'no-move' then return raw end
+    if incoming.grantKey ~= 'demo' and tonumber(incoming.generation) > tonumber(ARGV[4]) then return raw end
   end
 end
 redis.call('SET', KEYS[1], ARGV[2])
@@ -423,6 +434,7 @@ export class UpstashMonitorStore implements MonitorStore {
   constructor(
     private readonly url: string,
     private readonly token: string,
+    readonly keys: StoreKeys = storeKeys(),
   ) {}
 
   private async cmd(args: (string | number)[]): Promise<unknown> {
@@ -444,11 +456,11 @@ export class UpstashMonitorStore implements MonitorStore {
   }
 
   async get(id: string): Promise<Monitor | null> {
-    return this.parse(await this.cmd(["GET", MONITOR_PREFIX + id]));
+    return this.parse(await this.cmd(["GET", this.keys.monitor + id]));
   }
 
   async find(grantKey: string, watchId: string): Promise<Monitor | null> {
-    const idxRaw = await this.cmd(["GET", INDEX_PREFIX + indexKey(grantKey, watchId)]);
+    const idxRaw = await this.cmd(["GET", this.keys.index + indexKey(grantKey, watchId)]);
     if (typeof idxRaw !== "string" || !idxRaw) return null;
     const idx = JSON.parse(idxRaw) as { id: string };
     return this.get(idx.id);
@@ -459,12 +471,13 @@ export class UpstashMonitorStore implements MonitorStore {
       "EVAL",
       CREATE_LUA,
       3,
-      INDEX_PREFIX + indexKey(monitor.grantKey, monitor.watchId),
-      MONITOR_PREFIX + monitor.id,
-      PENDING_KEY,
-      MONITOR_PREFIX,
+      this.keys.index + indexKey(monitor.grantKey, monitor.watchId),
+      this.keys.monitor + monitor.id,
+      this.keys.pending,
+      this.keys.monitor,
       JSON.stringify({ id: monitor.id, generation: monitor.generation }),
       JSON.stringify(monitor),
+      MAX_GENERATION,
     ]);
     return this.parse(raw) ?? monitor;
   }
@@ -476,8 +489,8 @@ export class UpstashMonitorStore implements MonitorStore {
     now: number;
     consume?: () => Promise<ConsumeOutcome>;
   }): Promise<FinishResult> {
-    const keys = [MONITOR_PREFIX + opts.next.id, PENDING_KEY, OUTBOX_KEY];
-    if (opts.op === "fire" && opts.next.grantKey !== "demo") keys.push(GRANT_KEY_PREFIX + opts.next.grantKey);
+    const keys = [this.keys.monitor + opts.next.id, this.keys.pending, this.keys.outbox];
+    if (opts.op === "fire" && opts.next.grantKey !== "demo") keys.push(this.keys.grant + opts.next.grantKey);
     const raw = await this.cmd([
       "EVAL",
       FIRE_LUA,
@@ -497,7 +510,7 @@ export class UpstashMonitorStore implements MonitorStore {
   }
 
   async listPending(): Promise<Monitor[]> {
-    const ids = await this.cmd(["SMEMBERS", PENDING_KEY]);
+    const ids = await this.cmd(["SMEMBERS", this.keys.pending]);
     if (!Array.isArray(ids)) return [];
     const out: Monitor[] = [];
     for (const id of ids) {
@@ -509,7 +522,7 @@ export class UpstashMonitorStore implements MonitorStore {
   }
 
   async listOutbox(now: number): Promise<Monitor[]> {
-    const ids = await this.cmd(["SMEMBERS", OUTBOX_KEY]);
+    const ids = await this.cmd(["SMEMBERS", this.keys.outbox]);
     if (!Array.isArray(ids)) return [];
     const out: Monitor[] = [];
     for (const id of ids) {
@@ -522,7 +535,7 @@ export class UpstashMonitorStore implements MonitorStore {
   }
 
   async claimDelivery(id: string, now: number, lockMs = 60_000): Promise<Monitor | null> {
-    const raw = await this.cmd(["EVAL", CLAIM_LUA, 1, MONITOR_PREFIX + id, now, lockMs]);
+    const raw = await this.cmd(["EVAL", CLAIM_LUA, 1, this.keys.monitor + id, now, lockMs]);
     return this.parse(raw);
   }
 
@@ -531,8 +544,8 @@ export class UpstashMonitorStore implements MonitorStore {
       "EVAL",
       SETTLE_LUA,
       2,
-      MONITOR_PREFIX + id,
-      OUTBOX_KEY,
+      this.keys.monitor + id,
+      this.keys.outbox,
       result.ok ? "1" : "0",
       maxAttempts,
       result.error ?? "",
@@ -544,7 +557,7 @@ export class UpstashMonitorStore implements MonitorStore {
 export function monitorStoreFromEnv(env: Env = process.env): MonitorStore | null {
   const url = env.KV_REST_API_URL || env.UPSTASH_REDIS_REST_URL;
   const token = env.KV_REST_API_TOKEN || env.UPSTASH_REDIS_REST_TOKEN;
-  if (url && token) return new UpstashMonitorStore(url, token);
+  if (url && token) return new UpstashMonitorStore(url, token, storeKeys(env));
   if (env.VERCEL_ENV === "production" && env.GRANT_STORE !== "memory") return null;
   return sharedMemoryMonitor();
 }
