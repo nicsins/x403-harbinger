@@ -96,7 +96,12 @@ Publishers serve `/.well-known/harbinger` as `application/vnd.x403.harbinger+jso
 - The tx is bound to the first watch it is redeemed on. Other watches get **403** `grant-bound-to-other-watch`.
 - per-ping: `floor(paid / price)` pings (max 10), expiring 24h after first use. session: 24h from first use, max 288 requests.
 - Spent or expired gets **403** `grant-exhausted` / `grant-expired`. Records are kept, so a tx can never be re-bound.
-- `POST /v1/hooks` registers a delivery and spends one ping. Exhausted or differently bound grants are refused. Stream, patrol and AgentMail send each spend one.
+- `GET /v1/stream` validates and binds with `consume: false`, captures a live baseline, and returns `status: pending` plus `pollAfter`. It does not hold the function open for the watch window.
+- A ping is returned only when a sample **after** that baseline crosses the watch's leg thresholds (`all` / `any`, direction, percent). `firedAt` is that sample's provider timestamp. One quota unit is spent then, and only then.
+- Correlation is a Pearson over aligned leg returns in the window (same helper as patrol). One leg, or fewer than 8 returns, is `null` / header `n/a`. It is never a hard-coded `0.99`.
+- If the window ends with no cross, the body is `status: no-move`, `firedAt: null`, and quota is unchanged. Credit rule, **pending Nic's sign-off**: no consumption and no refund. `X-Harbinger-Rearm: 1` opens another window while quota remains.
+- `POST /v1/hooks` registers a callback and does **not** spend a ping. A protected `GET /api/v1/pump` (Vercel Cron, `Authorization: Bearer $CRON_SECRET`) evaluates due monitors and POSTs a signed body. Retries do not spend again. No-move does not POST. Catalog cards still say webhook outbound is **not-live** until a preview probe.
+- Patrol and AgentMail send still spend one use per call. Exhausted, expired, cross-watch, and missing-store behavior is unchanged.
 - Storage: Upstash Redis REST (`KV_REST_API_URL`/`KV_REST_API_TOKEN` or `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`).
   Dev and preview fall back to in-memory. Production with no store answers tx grants with **503** (fail closed)
   unless `GRANT_STORE=memory` is set on purpose (per-instance only, so replay is possible across instances).

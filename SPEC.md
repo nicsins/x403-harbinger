@@ -56,7 +56,7 @@ A mailbox API key is not a grant.
 1. Subscriber GET /v1/stream with X-Harbinger-Watch.
 2. Edge answers 403 with X-Harbinger-Forbidden: grant-required, plus price, event, and advantage window.
 3. Subscriber retries with X-Harbinger-Grant.
-4. Edge answers 200 with X-Harbinger-Receipt: settled and opens the stream.
+4. Edge answers 200. The body is `pending` until a sample taken after arm time crosses the watch. That response carries the receipt, and `firedAt` is the sample's own timestamp. If the window ends first, the body is `no-move`, `firedAt` is null, and the grant is not spent. The edge must not hold the request open for the whole window; the client polls.
 
 ## 6. Headers
 
@@ -82,11 +82,11 @@ Listed endpoints appear at GET /v1/index. Watches appear at GET /v1/watches. The
 
 ## 8. Notify
 
-After a grant, GET /v1/stream with Accept: text/event-stream yields SSE. Accept: application/json yields a single correlate object. Webhooks POST the same object to a subscriber URL.
+After a grant, GET /v1/stream with Accept: text/event-stream yields one SSE event (`pending`, `ping`, or `no-move`) and closes. Accept: application/json yields the same object. Clients poll until the watch fires or the window ends. Webhook delivery is a signed POST of the fired object from a scheduled pump. It is not advertised as live until that path has been probed. A no-move does not POST and does not spend quota.
 
 ## 9. Correlation
 
-A watch is logic `all` or `any` over N conditions inside a window. When it fires the edge MUST include X-Harbinger-Correlation (0–1) and X-Harbinger-Advantage-Window (milliseconds). The fee is for the join, not for a single print.
+A watch is logic `all` or `any` over N conditions inside a window. When it fires the edge MUST include X-Harbinger-Correlation and X-Harbinger-Advantage-Window (milliseconds). Correlation is a Pearson of aligned leg returns over the watch, in [-1, 1]. One leg, or fewer than 8 aligned returns, is undefined: the header is `n/a` and the JSON value is null. Implementations MUST NOT invent a constant such as 0.99. The fee is for the fired join, not for arming the watch.
 
 Finance watches in 1.0 are percent-move legs over 1h / 4h / 1d on named instruments (crypto, G10 FX, equities). A canonical example is bitcoin ±10% in one hour. Pairwise rolling Pearson on the same bars MAY be published as context. Those scores are estimates. They MUST NOT be presented as investment advice.
 
