@@ -1,8 +1,20 @@
+import { validateCallbackUrl } from "@/lib/hook";
+import { monitorNow, registerHook } from "@/lib/monitor";
 import { H, MEDIA, PROTOCOL, corsHeaders, findWatch, grantDeniedResponse, watchById } from "@/lib/protocol";
 import { checkGrant } from "@/lib/grant";
 
+export const dynamic = "force-dynamic";
+
 export async function OPTIONS() {
   return new Response(null, { status: 204, headers: corsHeaders() });
+}
+
+function callbackRaw(body: Record<string, unknown>): unknown {
+  for (const key of ["callback", "url", "webhook"]) {
+    const value = body[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
 }
 
 export async function POST(request: Request) {
@@ -16,10 +28,13 @@ export async function POST(request: Request) {
     (typeof body.watchId === "string" ? body.watchId : null) ??
     request.headers.get(H.watch);
   const watch = findWatch(watchIdRaw);
+  const rawCallback = callbackRaw(body);
+  const parsed = rawCallback == null ? null : validateCallbackUrl(rawCallback);
+  const now = monitorNow();
 
-  // Hook registration is the metered delivery event: consume one quota unit,
-  // exactly like stream. This prevents exhausted grants from re-registering.
-  const check = await checkGrant(request.headers.get(H.grant), watchIdRaw, watch, { consume: true });
+  // Registration binds the grant and does not spend quota. The pump spends one
+  // unit only when a later sample actually fires.
+  const check = await checkGrant(request.headers.get(H.grant), watchIdRaw, watch, { consume: false, now });
   if (!check.ok) {
     if (check.status !== 403) return grantDeniedResponse(check, watch ?? watchById(null), watchIdRaw);
     return new Response(JSON.stringify({ forbidden: check.reason }), {
@@ -27,8 +42,31 @@ export async function POST(request: Request) {
       headers: { "content-type": MEDIA, [H.forbidden]: check.reason, [H.version]: PROTOCOL, ...corsHeaders() },
     });
   }
-  return Response.json(
-    { protocol: PROTOCOL, accepted: true, watchId: watch!.id },
-    { headers: corsHeaders() },
-  );
+  if (parsed && !parsed.ok) {
+    return new Response(JSON.stringify({ error: parsed.reason }), {
+      status: 400,
+      headers: { "content-type": MEDIA, [H.version]: PROTOCOL, ...corsHeaders() },
+    });
+  }
+  if (check.kind === "tx" && check.binding.used >= check.binding.quota) {
+    return new Response(JSON.stringify({ forbidden: "grant-exhausted" }), {
+      status: 403,
+      headers: { "content-type": MEDIA, [H.forbidden]: "grant-exhausted", [H.version]: PROTOCOL, ...corsHeaders() },
+    });
+  }
+
+  const headers: Record<string, string> = { ...corsHeaders() };
+  if (parsed?.ok) {
+    const armed = await registerHook({
+      watch: watch!,
+      check,
+      grantRaw: (request.headers.get(H.grant) ?? "").trim(),
+      url: parsed.url,
+      now,
+    });
+    if (!armed.ok) return armed.denied.response;
+    if (armed.monitorId) headers["X-Harbinger-Monitor"] = armed.monitorId;
+  }
+
+  return Response.json({ protocol: PROTOCOL, accepted: true, watchId: watch!.id }, { headers });
 }

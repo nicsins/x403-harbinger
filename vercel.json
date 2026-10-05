@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/v1/pump",
+      "schedule": "0 13 * * *"
+    }
+  ]
+}
