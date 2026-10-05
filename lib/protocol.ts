@@ -2,13 +2,17 @@ import { WATCH_BOOK } from "@/lib/agency";
 
 import {
   isValidGrant as _isValidGrant,
+  checkGrant,
   parseTxGrant,
   allowDemoGrant,
   verifyBaseUsdcGrant,
   MIN_GRANT_USDC,
   USDC_BASE,
+  GRANT_POLICY,
   grantAdvert,
   type GrantOpts,
+  type GrantCheck,
+  type CheckGrantOpts,
 } from "@/lib/grant";
 
 export async function isValidGrant(
@@ -17,8 +21,8 @@ export async function isValidGrant(
 ): Promise<boolean> {
   return _isValidGrant(raw, opts);
 }
-export { parseTxGrant, allowDemoGrant, verifyBaseUsdcGrant, MIN_GRANT_USDC, USDC_BASE, grantAdvert };
-export type { GrantOpts };
+export { parseTxGrant, allowDemoGrant, verifyBaseUsdcGrant, MIN_GRANT_USDC, USDC_BASE, GRANT_POLICY, grantAdvert };
+export type { GrantOpts, GrantCheck };
 
 export const PROTOCOL = "x403-HARBINGER/1.0";
 export const DESIGNATION = "x403-HARBINGER";
@@ -210,6 +214,62 @@ export function watchById(id: string | null | undefined): Watch {
   return WATCHES.find((w) => w.id === id) ?? WATCHES[0]!;
 }
 
+/** Strict lookup: null when missing or unknown (no default watch). */
+export function findWatch(id: string | null | undefined): Watch | null {
+  if (!id) return null;
+  return WATCHES.find((w) => w.id === id.trim()) ?? null;
+}
+
+export type GrantGate =
+  | { ok: true; watch: Watch; check: Extract<GrantCheck, { ok: true }> }
+  | { ok: false; response: Response };
+
+/**
+ * Watch-bound grant gate for stream / hooks / patrol / agentmail send.
+ * No or invalid grant -> 403 challenge (for the named watch, or the default
+ * watch when none/unknown, as before). Valid-form grant + missing/unknown watch -> 400.
+ */
+export async function gateGrant(
+  grant: string | null | undefined,
+  watchIdRaw: string | null | undefined,
+  opts: CheckGrantOpts,
+): Promise<GrantGate> {
+  const watch = findWatch(watchIdRaw);
+  const check = await checkGrant(grant, watchIdRaw, watch, opts);
+  if (check.ok) return { ok: true, watch: watch!, check };
+  return { ok: false, response: grantDeniedResponse(check, watch ?? watchById(null), watchIdRaw) };
+}
+
+export function grantDeniedResponse(
+  check: Extract<GrantCheck, { ok: false }>,
+  watch: Watch,
+  watchIdRaw?: string | null,
+): Response {
+  if (check.status === 403) return challengeResponse(watch, check.reason, check.binding);
+  const body =
+    check.status === 400
+      ? {
+          protocol: PROTOCOL,
+          status: 400,
+          error: check.reason,
+          meaning:
+            check.reason === "watch-required"
+              ? `Send ${H.watch} with a watch id from /v1/watches.`
+              : `Unknown watch id. See /v1/watches.`,
+          ...(watchIdRaw ? { watch: watchIdRaw.slice(0, 64) } : {}),
+        }
+      : {
+          protocol: PROTOCOL,
+          status: 503,
+          error: check.reason,
+          meaning: "Grant binding store unavailable; refusing to accept tx grants without replay protection.",
+        };
+  return new Response(JSON.stringify(body, null, 2), {
+    status: check.status,
+    headers: { "content-type": MEDIA, ...corsHeaders(), [H.version]: PROTOCOL, "cache-control": "no-store" },
+  });
+}
+
 export function mintReceipt(watchId: string, txRef?: string | null): string {
   const short = txRef ? `.${txRef.replace(/^0x/i, "").slice(0, 8)}` : "";
   return `rcpt.${watchId}${short}.${Math.random().toString(16).slice(2, 10)}`;
@@ -252,6 +312,7 @@ export function wellKnown(origin: string) {
     brand: "/brand/MARK.md",
     avatar: "/brand/harbinger-avatar.jpg",
     context: "/v1/context",
+    catalog: "/v1/catalog/cards",
     notify: {
       sse: "/v1/stream",
       webhook: "/v1/hooks",
@@ -269,15 +330,29 @@ export function wellKnown(origin: string) {
   };
 }
 
-export function challengeResponse(watch: Watch): Response {
+export function challengeResponse(
+  watch: Watch,
+  forbidden: string = "grant-required",
+  binding?: { watchId: string; quota: number; used: number; expiresAt: number },
+): Response {
   const event = watch.conditions.map((c) => c.event).join(watch.logic === "all" ? " AND " : " OR ");
   const body = {
     protocol: PROTOCOL,
     document: DOCUMENT,
     urn: URN,
     status: 403,
-    forbidden: "grant-required",
+    forbidden,
     meaning: "Forbidden from this event stream until a Harbinger grant is presented.",
+    ...(binding
+      ? {
+          grantBinding: {
+            watchId: binding.watchId,
+            used: binding.used,
+            quota: binding.quota,
+            expiresAt: new Date(binding.expiresAt).toISOString(),
+          },
+        }
+      : {}),
     watch: watch.id,
     event,
     price: `${watch.priceUsdc} ${ASSET}`,
@@ -295,7 +370,7 @@ export function challengeResponse(watch: Watch): Response {
       "content-type": MEDIA,
       ...corsHeaders(),
       [H.version]: PROTOCOL,
-      [H.forbidden]: "grant-required",
+      [H.forbidden]: forbidden,
       [H.watch]: watch.id,
       [H.event]: event,
       [H.price]: body.price,
