@@ -381,20 +381,5 @@ export function challengeResponse(
   });
 }
 
-export function settledPing(watch: Watch, txRef?: string | null) {
-  const matched = watch.conditions.map((c) => c.event);
-  const ping = {
-    protocol: PROTOCOL,
-    watchId: watch.id,
-    event: matched.join(watch.logic === "all" ? "+" : "|"),
-    correlation: 0.99,
-    advantageMs: watch.advantageMs,
-    priceUsdc: watch.priceUsdc,
-    receipt: mintReceipt(watch.id, txRef),
-    firedAt: new Date().toISOString(),
-    conditions: matched,
-    delivery: watch.deliveries,
-    ...(txRef ? { settleTx: txRef } : {}),
-  };
-  return ping;
-}
+// Paid pings are built in lib/monitor.ts from a real sample. Correlation is a
+// measured Pearson or null. It is never a placeholder constant.
