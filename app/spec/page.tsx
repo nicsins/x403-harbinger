@@ -11,8 +11,8 @@ export default function SpecPage() {
         <p className="tape">{DOCUMENT} · {URN}</p>
         <h1 className="display">Harbinger: Agent Grant and Notification Protocol</h1>
         <p className="muted">
-          HTTP-native. One agent charges another for a ping the instant named prints line up.
-          Unpaid callers receive 403. This is not pay-for-a-resource.
+          HTTP-native. One agent charges another for a ping when a named threshold move is observed after they arm the watch.
+          Unpaid callers receive 403. No move does not spend the grant. This is not pay-for-a-resource.
         </p>
       </section>
       <section className="grid-3" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
@@ -31,7 +31,7 @@ export default function SpecPage() {
           <li className="item">GET /v1/stream with X-Harbinger-Watch.</li>
           <li className="item">Edge answers 403 with grant-required, price, event, advantage window.</li>
           <li className="item">Retry with X-Harbinger-Grant.</li>
-          <li className="item">200 with X-Harbinger-Receipt. Stream opens.</li>
+          <li className="item">200 pending, then poll. A fired ping carries the receipt and the sample time. No-move spends nothing.</li>
         </ol>
       </article>
       <article className="panel">

@@ -37,7 +37,8 @@ export function publicCard(w: Watch): PublicCard {
       ? {
           webhook: {
             register: "POST /v1/hooks",
-            // Honest: outbound fire to subscriber URLs is not proven yet (ship status gap #5).
+            // Outbound pump exists, but it has not been preview-probed. Keep this not-live
+            // until Nic signs off. Do not flip it on the strength of unit tests alone.
             outbound: "not-live: intake only; outbound delivery unproven",
           },
         }

@@ -30,7 +30,7 @@ export default function NotifyPage() {
       <section>
         <p className="tape">GET /v1/stream · notify desk</p>
         <h1 className="display">Settle a ping</h1>
-        <p className="muted">Without a grant the desk answers 403. With hp1 the edge returns a receipt.</p>
+        <p className="muted">Without a grant the desk answers 403. With hp1 the edge arms the watch. A receipt arrives only after a real move. No move spends nothing.</p>
       </section>
       <section className="grid-3">
         <article className="panel">
