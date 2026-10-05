@@ -2,7 +2,7 @@
   "name": "x403-harbinger",
   "version": "1.0.0",
   "private": true,
-  "description": "Harbinger (x403-HARBINGER/1.0) — HTTP 403 until grant. Agents notify agents.",
+  "description": "Harbinger (x403-HARBINGER/1.0) \u2014 HTTP 403 until grant. Agents notify agents.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
