@@ -1,5 +1,6 @@
-import { H, MEDIA, PROTOCOL, corsHeaders, gateGrant } from "@/lib/protocol";
+import { H, MEDIA, PROTOCOL, corsHeaders, gateGrant, grantReservedResponse } from "@/lib/protocol";
 import { runPatrol } from "@/lib/patrol";
+import { lookupPendingMonitor, monitorNow, settleOverdueHold } from "@/lib/monitor";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -11,10 +12,28 @@ export async function OPTIONS() {
 export async function POST(request: Request) {
   // Patrol sweeps the whole book; it keeps its documented default watch for pricing,
   // but the tx grant is still bound to that watch and consumes one use.
-  const gate = await gateGrant(request.headers.get(H.grant), request.headers.get(H.watch) ?? "w_btc_10_1h", {
+  const watchId = request.headers.get(H.watch) ?? "w_btc_10_1h";
+  let gate = await gateGrant(request.headers.get(H.grant), watchId, {
     consume: true,
   });
-  if (!gate.ok) return gate.response;
+  if (!gate.ok && gate.check.reason === "grant-reserved" && gate.check.txHash && gate.check.binding) {
+    // A hold past its deadline is settled (no-move releases it), then the spend is retried once.
+    const hold = await settleOverdueHold(gate.check.txHash, gate.check.binding.watchId, monitorNow());
+    if (hold.settled) gate = await gateGrant(request.headers.get(H.grant), watchId, { consume: true });
+  }
+  if (!gate.ok) {
+    if (gate.check.reason === "grant-reserved" && gate.check.binding) {
+      const held = gate.check.txHash ? await lookupPendingMonitor(gate.check.txHash, gate.check.binding.watchId) : null;
+      return grantReservedResponse({
+        watchId: gate.check.binding.watchId,
+        reserved: gate.check.binding.reserved ?? 0,
+        used: gate.check.binding.used,
+        quota: gate.check.binding.quota,
+        ...(held ? { monitorId: held.id, deadlineAt: new Date(held.deadlineAt).toISOString() } : {}),
+      });
+    }
+    return gate.response;
+  }
   const snap = await runPatrol(true);
   return new Response(
     JSON.stringify(

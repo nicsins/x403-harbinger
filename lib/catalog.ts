@@ -6,7 +6,7 @@
  * price, triggers, disclaimer; no key; no PnL, hit-rates, scores or fire history.
  * The keyed tier (?key=, full + entitlement) is not built: API keys are a later cut.
  */
-import type { Watch } from "./protocol";
+import { paidPingEligible, type Watch } from "./protocol";
 
 export const CARD_DISCLAIMER = "Informational notify. No PnL promise. Not investment advice.";
 
@@ -19,12 +19,26 @@ export type PublicCard = {
   triggers: string[];
   deliveries: Watch["deliveries"];
   webhook?: { register: string; outbound: string };
-  subscribe: { stream: string; headers: string[] };
+  /** Absent when the watch is not offered for paid ping. */
+  subscribe?: { stream: string; headers: string[] };
   disclaimer: string;
 };
 
 export function publicCard(w: Watch): PublicCard {
   const joiner = w.logic === "all" ? " AND " : " OR ";
+  if (!paidPingEligible(w)) {
+    // Listed, but no paid ping: no subscribe or hook entry points.
+    return {
+      watchId: w.id,
+      title: w.name,
+      description: `${w.conditions.map((c) => c.label).join(joiner)}. Listed only: not offered for paid ping.`,
+      priceUsdc: w.priceUsdc,
+      billing: w.billing,
+      triggers: w.conditions.map((c) => c.event),
+      deliveries: w.deliveries,
+      disclaimer: CARD_DISCLAIMER,
+    };
+  }
   return {
     watchId: w.id,
     title: w.name,
@@ -37,7 +51,8 @@ export function publicCard(w: Watch): PublicCard {
       ? {
           webhook: {
             register: "POST /v1/hooks",
-            // Honest: outbound fire to subscriber URLs is not proven yet (ship status gap #5).
+            // Outbound pump exists, but it has not been preview-probed. Keep this not-live
+            // until Nic signs off. Do not flip it on the strength of unit tests alone.
             outbound: "not-live: intake only; outbound delivery unproven",
           },
         }

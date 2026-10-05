@@ -19,7 +19,7 @@ SpaceX, xAI, and X are private — last-reported marks, not live quotes.
 
 ## Grant-required
 
-- Stream: GET /v1/stream  (403 until X-Harbinger-Grant: hp1.<payload>)
+- Stream: GET /v1/stream  (403 until X-Harbinger-Grant: hp1.<payload>). A grant arms a watch; the ping waits for a real post-start move. No-move does not spend quota. Webhook outbound is not live.
 - Patrol: POST /v1/patrol
 - Demo grant (reference only; rejected in production): hp1.demo
 - Production grant form: hp1.<BaseTxHash> (verified Base USDC Transfer to payTo)
