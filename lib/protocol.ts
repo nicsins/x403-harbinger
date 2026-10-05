@@ -63,6 +63,12 @@ export type Watch = {
   conditions: { id: string; event: string; label: string; source: "market" | "agentmail" | "crawl" }[];
   deliveries: DeliveryRail[];
   hot?: boolean;
+  /**
+   * false: listed in the book, but no paid ping can be armed on it (stream or
+   * hook). Set on watches with no evaluable trigger legs, so a paid ping could
+   * only ever end in no-move.
+   */
+  paidPing?: false;
 };
 
 export const MAIL_WATCHES: Watch[] = [
@@ -91,6 +97,9 @@ export const MAIL_WATCHES: Watch[] = [
     advantageMs: 620,
     priceUsdc: 0.14,
     billing: "per-ping",
+    // No trigger legs in the agency book (no chain.whale.btc evaluator), so it is
+    // not offered for paid ping. It stays listed.
+    paidPing: false,
     deliveries: ["sse", "webhook", "agentmail"],
     conditions: [
       { id: "c_whale", event: "chain.whale.btc", label: "Whale transfer", source: "market" },
@@ -214,6 +223,28 @@ export function watchById(id: string | null | undefined): Watch {
   return WATCHES.find((w) => w.id === id) ?? WATCHES[0]!;
 }
 
+/** Whether a paid ping (stream arm or hook) may be opened on this watch. */
+export function paidPingEligible(watch: Watch): boolean {
+  return watch.paidPing !== false;
+}
+
+/**
+ * 400 for a listed watch that is not offered for paid ping. Sent before any
+ * grant check, so no tx is bound to it and nothing is reserved or spent.
+ */
+export function notPingableResponse(watch: Watch): Response {
+  return new Response(
+    JSON.stringify({
+      protocol: PROTOCOL,
+      status: 400,
+      error: "watch-not-pingable",
+      meaning: "This watch is listed but has no trigger conditions to evaluate, so no paid ping is offered on it.",
+      watch: watch.id,
+    }),
+    { status: 400, headers: { "content-type": MEDIA, [H.version]: PROTOCOL, "cache-control": "no-store", ...corsHeaders() } },
+  );
+}
+
 /** Strict lookup: null when missing or unknown (no default watch). */
 export function findWatch(id: string | null | undefined): Watch | null {
   if (!id) return null;
@@ -222,7 +253,7 @@ export function findWatch(id: string | null | undefined): Watch | null {
 
 export type GrantGate =
   | { ok: true; watch: Watch; check: Extract<GrantCheck, { ok: true }> }
-  | { ok: false; response: Response };
+  | { ok: false; response: Response; check: Extract<GrantCheck, { ok: false }> };
 
 /**
  * Watch-bound grant gate for stream / hooks / patrol / agentmail send.
@@ -237,7 +268,7 @@ export async function gateGrant(
   const watch = findWatch(watchIdRaw);
   const check = await checkGrant(grant, watchIdRaw, watch, opts);
   if (check.ok) return { ok: true, watch: watch!, check };
-  return { ok: false, response: grantDeniedResponse(check, watch ?? watchById(null), watchIdRaw) };
+  return { ok: false, check, response: grantDeniedResponse(check, watch ?? watchById(null), watchIdRaw) };
 }
 
 export function grantDeniedResponse(
@@ -246,6 +277,14 @@ export function grantDeniedResponse(
   watchIdRaw?: string | null,
 ): Response {
   if (check.status === 403) return challengeResponse(watch, check.reason, check.binding);
+  if (check.status === 409 && check.reason === "grant-reserved") {
+    return grantReservedResponse({
+      watchId: check.binding?.watchId ?? watch.id,
+      reserved: check.binding?.reserved ?? 0,
+      used: check.binding?.used ?? 0,
+      quota: check.binding?.quota ?? 0,
+    });
+  }
   const body =
     check.status === 400
       ? {
@@ -330,10 +369,42 @@ export function wellKnown(origin: string) {
   };
 }
 
+export function grantReservedResponse(opts: {
+  watchId: string;
+  reserved: number;
+  used: number;
+  quota: number;
+  monitorId?: string;
+  deadlineAt?: string;
+}): Response {
+  const body = {
+    protocol: PROTOCOL,
+    status: 409,
+    error: "grant-reserved",
+    meaning: "A paid ping on this grant and watch is still pending. This call would spend the unit it is holding.",
+    watch: opts.watchId,
+    reserved: opts.reserved,
+    used: opts.used,
+    quota: opts.quota,
+    ...(opts.monitorId ? { monitorId: opts.monitorId } : {}),
+    ...(opts.deadlineAt ? { deadlineAt: opts.deadlineAt } : {}),
+  };
+  return new Response(JSON.stringify(body, null, 2), {
+    status: 409,
+    headers: {
+      "content-type": MEDIA,
+      ...corsHeaders(),
+      [H.version]: PROTOCOL,
+      [H.forbidden]: "grant-reserved",
+      "cache-control": "no-store",
+    },
+  });
+}
+
 export function challengeResponse(
   watch: Watch,
   forbidden: string = "grant-required",
-  binding?: { watchId: string; quota: number; used: number; expiresAt: number },
+  binding?: { watchId: string; quota: number; used: number; expiresAt: number; reserved?: number },
 ): Response {
   const event = watch.conditions.map((c) => c.event).join(watch.logic === "all" ? " AND " : " OR ");
   const body = {
@@ -349,6 +420,7 @@ export function challengeResponse(
             watchId: binding.watchId,
             used: binding.used,
             quota: binding.quota,
+            reserved: binding.reserved ?? 0,
             expiresAt: new Date(binding.expiresAt).toISOString(),
           },
         }

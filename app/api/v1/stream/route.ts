@@ -1,5 +1,5 @@
 import { formatCorrelation, monitorNow, pollStream } from "@/lib/monitor";
-import { H, MEDIA, PROTOCOL, corsHeaders, gateGrant } from "@/lib/protocol";
+import { H, MEDIA, PROTOCOL, corsHeaders, findWatch, gateGrant, notPingableResponse, paidPingEligible } from "@/lib/protocol";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -11,6 +11,8 @@ export async function OPTIONS() {
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const watchIdRaw = request.headers.get(H.watch) ?? url.searchParams.get("watch");
+  const named = findWatch(watchIdRaw);
+  if (named && !paidPingEligible(named)) return notPingableResponse(named);
   const now = monitorNow();
   const gate = await gateGrant(request.headers.get(H.grant), watchIdRaw, { consume: false, now });
   if (!gate.ok) return gate.response;

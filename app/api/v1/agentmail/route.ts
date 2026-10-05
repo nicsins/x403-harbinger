@@ -1,5 +1,6 @@
-import { H, MEDIA, PROTOCOL, corsHeaders, findWatch, grantDeniedResponse, mintReceipt, watchById } from "@/lib/protocol";
+import { H, MEDIA, PROTOCOL, corsHeaders, findWatch, grantDeniedResponse, grantReservedResponse, mintReceipt, watchById } from "@/lib/protocol";
 import { checkGrant } from "@/lib/grant";
+import { lookupPendingMonitor, monitorNow, settleOverdueHold } from "@/lib/monitor";
 
 export async function OPTIONS() {
   return new Response(null, { status: 204, headers: corsHeaders() });
@@ -35,8 +36,23 @@ export async function POST(request: Request) {
   if (action === "send") {
     const watchIdRaw = typeof body.watchId === "string" ? body.watchId : null;
     const found = findWatch(watchIdRaw);
-    const check = await checkGrant(grant, watchIdRaw, found, { consume: true });
+    let check = await checkGrant(grant, watchIdRaw, found, { consume: true });
+    if (!check.ok && check.reason === "grant-reserved" && check.txHash && check.binding) {
+      // A hold past its deadline is settled (no-move releases it), then the spend is retried once.
+      const hold = await settleOverdueHold(check.txHash, check.binding.watchId, monitorNow());
+      if (hold.settled) check = await checkGrant(grant, watchIdRaw, found, { consume: true });
+    }
     if (!check.ok) {
+      if (check.reason === "grant-reserved" && check.binding) {
+        const held = check.txHash ? await lookupPendingMonitor(check.txHash, check.binding.watchId) : null;
+        return grantReservedResponse({
+          watchId: check.binding.watchId,
+          reserved: check.binding.reserved ?? 0,
+          used: check.binding.used,
+          quota: check.binding.quota,
+          ...(held ? { monitorId: held.id, deadlineAt: new Date(held.deadlineAt).toISOString() } : {}),
+        });
+      }
       if (check.status !== 403) return grantDeniedResponse(check, found ?? watchById(null), watchIdRaw);
       return Response.json({ ok: false, forbidden: check.reason }, { status: 403 });
     }

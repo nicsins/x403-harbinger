@@ -1,6 +1,6 @@
 import { validateCallbackUrl } from "@/lib/hook";
 import { monitorNow, registerHook } from "@/lib/monitor";
-import { H, MEDIA, PROTOCOL, corsHeaders, findWatch, grantDeniedResponse, watchById } from "@/lib/protocol";
+import { H, MEDIA, PROTOCOL, corsHeaders, findWatch, grantDeniedResponse, notPingableResponse, paidPingEligible, watchById } from "@/lib/protocol";
 import { checkGrant } from "@/lib/grant";
 
 export const dynamic = "force-dynamic";
@@ -43,12 +43,13 @@ export async function POST(request: Request) {
       { status: 400, headers: { "content-type": MEDIA, [H.version]: PROTOCOL, ...corsHeaders() } },
     );
   }
+  if (watch && !paidPingEligible(watch)) return notPingableResponse(watch);
   const rawCallback = callbackRaw(body);
   const parsed = rawCallback == null ? null : validateCallbackUrl(rawCallback);
   const now = monitorNow();
 
-  // Registration binds the grant and does not spend quota. The pump spends one
-  // unit only when a later sample actually fires.
+  // Registration binds the grant and does not spend. Arming a callback reserves
+  // one unit; the pump converts it only when a later sample actually fires.
   const check = await checkGrant(request.headers.get(H.grant), watchIdRaw, watch, { consume: false, now });
   if (!check.ok) {
     if (check.status !== 403) return grantDeniedResponse(check, watch ?? watchById(null), watchIdRaw);
