@@ -1,9 +1,21 @@
 /**
  * Durable pending-monitor and hook outbox.
  *
- * Grant redemption itself stays in grant-store.ts. A fire commits the monitor
- * and the quota increment together: in-process, inside one lock; on Upstash,
- * inside one Lua script. A no-move never touches `used`.
+ * Grant counters stay in grant-store.ts. This store commits them in the same
+ * critical section as the monitor row:
+ * - create reserves one unit only when it actually inserts a new tx monitor
+ *   (CREATE_LUA on Upstash, the create lock in memory). A rejected insert
+ *   (pending, fired, or past the rearm cap) does not reserve.
+ * - fire converts that hold into a spend inside FIRE_LUA / the commit lock.
+ *   The convert does not re-check `used + reserved < quota`.
+ * - no-move, including a deadline reached by stepTrigger or the pump, releases
+ *   the hold. `used` does not change.
+ *
+ * Chosen over reserve-then-create: a crash between the two calls, or a create
+ * that loses the race, would hold a unit with no monitor or free a unit the
+ * winner still needs. One script (or one lock section) commits both.
+ * Demo monitors (`grantKey === "demo"`) skip the counter. A replayed commit
+ * is idempotent per monitor id (`reservation` on the binding).
  *
  * Production with no Upstash credentials and no GRANT_STORE=memory returns null.
  * Callers fail closed.
@@ -11,6 +23,14 @@
 import { createHash } from "node:crypto";
 import type { PriceSample } from "@/lib/trigger";
 import { storeKeys, type StoreKeys } from "@/lib/store-keys";
+import {
+  GRANT_LUA_LIB,
+  grantStoreFromEnv,
+  normalizeBinding,
+  type GrantBinding,
+  type GrantOpReason,
+  type MemoryGrantStore,
+} from "@/lib/grant-store";
 
 
 export type HookState = "armed" | "queued" | "inflight" | "delivered" | "skipped" | "dead";
@@ -23,7 +43,11 @@ export type HookDelivery = {
   lastError?: string;
 };
 
-export type GrantSnap = { watchId: string; used: number; quota: number; expiresAt: number };
+export type GrantSnap = { watchId: string; used: number; quota: number; expiresAt: number; reserved?: number };
+
+export type CreateOutcome =
+  | { ok: true; monitor: Monitor }
+  | { ok: false; reason: GrantOpReason; binding?: GrantBinding };
 
 export type MonitorStatus = "pending" | "fired" | "no-move" | "closed";
 
@@ -55,10 +79,6 @@ export type Monitor = {
 
 export type CommitOp = "save" | "fire" | "nomove" | "attach" | "close";
 
-export type ConsumeOutcome =
-  | { ok: true; demo?: boolean; grant?: GrantSnap }
-  | { ok: false; reason: "exhausted" | "expired" | "unbound" | "unavailable" };
-
 export type FinishResult =
   | { ok: true; applied: boolean; monitor: Monitor }
   | { ok: false; reason: "conflict" | "missing" | "exhausted" | "expired" | "unbound" | "unavailable"; monitor?: Monitor };
@@ -72,21 +92,23 @@ export interface MonitorStore {
   readonly kind: "memory" | "upstash";
   get(id: string): Promise<Monitor | null>;
   find(grantKey: string, watchId: string): Promise<Monitor | null>;
-  /** Insert, or return the current pending monitor for this grant and watch. */
-  create(monitor: Monitor): Promise<Monitor>;
+  /**
+   * Insert, or return the monitor the create guard keeps.
+   * `reserve: true` holds one quota unit in the same critical section as the
+   * insert. Demo callers omit it. A kept row does not reserve again.
+   */
+  create(monitor: Monitor, opts?: { reserve?: boolean }): Promise<CreateOutcome>;
   /**
    * Write `next` if `expectedVersion` still matches and the monitor is pending.
-   * For `fire` on a tx grant, the memory store runs `consume` inside the lock
-   * and patches `ping.grant.used` from the binding it returns. Upstash does the
-   * increment in the same script and ignores `consume` so the unit cannot be
-   * spent twice.
+   * `fire` converts the monitor's reservation into a spend. `nomove` releases
+   * it. Both happen inside the lock (memory) or FIRE_LUA (Upstash), keyed by
+   * monitor id, so a replay cannot spend or release twice.
    */
   commit(opts: {
     expectedVersion: number;
     next: Monitor;
     op: CommitOp;
     now: number;
-    consume?: () => Promise<ConsumeOutcome>;
   }): Promise<FinishResult>;
   listPending(): Promise<Monitor[]>;
   listOutbox(now: number): Promise<Monitor[]>;
@@ -107,6 +129,7 @@ function patchFired(next: Monitor, grant: GrantSnap | undefined, demo: boolean):
       watchId: grant.watchId,
       used: grant.used,
       quota: grant.quota,
+      reserved: grant.reserved ?? 0,
       expiresAt: new Date(grant.expiresAt).toISOString(),
     };
   }
@@ -123,6 +146,11 @@ function patchFired(next: Monitor, grant: GrantSnap | undefined, demo: boolean):
 export const REARM_LIMIT = 3;
 /** Generation 1 is the first arm; each later generation is one free re-arm. */
 export const MAX_GENERATION = 1 + REARM_LIMIT;
+
+function memoryGrants(): MemoryGrantStore | null {
+  const gs = grantStoreFromEnv();
+  return gs?.kind === "memory" ? (gs as MemoryGrantStore) : null;
+}
 
 /**
  * Store-side create guard (mirrored in CREATE_LUA, atomic on Upstash).
@@ -171,18 +199,24 @@ export class MemoryMonitorStore implements MonitorStore {
     return this.get(idx.id);
   }
 
-  async create(monitor: Monitor): Promise<Monitor> {
+  async create(monitor: Monitor, opts?: { reserve?: boolean }): Promise<CreateOutcome> {
     const key = indexKey(monitor.grantKey, monitor.watchId);
     return this.lock(`idx:${key}`, async () => {
       const idx = this.index.get(key);
       const prev = idx ? (this.map.get(idx.id) ?? null) : null;
       const keep = acceptCreate(prev, monitor);
-      if (keep) return structuredClone(keep);
+      if (keep) return { ok: true as const, monitor: structuredClone(keep) };
+      if (opts?.reserve && monitor.grantKey !== "demo") {
+        const grants = memoryGrants();
+        if (!grants) return { ok: false as const, reason: "unavailable" as const };
+        const held = grants.reserveNow(monitor.grantKey, monitor.id, monitor.watchId, monitor.startedAt);
+        if (!held.ok) return { ok: false as const, reason: held.reason, ...(held.binding ? { binding: held.binding } : {}) };
+      }
       const stored = structuredClone(monitor);
       this.map.set(stored.id, stored);
       this.index.set(key, { id: stored.id, generation: stored.generation });
       if (stored.status === "pending") this.pending.add(stored.id);
-      return structuredClone(stored);
+      return { ok: true as const, monitor: structuredClone(stored) };
     });
   }
 
@@ -193,13 +227,7 @@ export class MemoryMonitorStore implements MonitorStore {
     else this.outbox.delete(m.id);
   }
 
-  async commit(opts: {
-    expectedVersion: number;
-    next: Monitor;
-    op: CommitOp;
-    now: number;
-    consume?: () => Promise<ConsumeOutcome>;
-  }): Promise<FinishResult> {
+  async commit(opts: { expectedVersion: number; next: Monitor; op: CommitOp; now: number }): Promise<FinishResult> {
     return this.lock(`mon:${opts.next.id}`, async () => {
       const current = this.map.get(opts.next.id);
       if (!current) return { ok: false, reason: "missing" };
@@ -211,8 +239,9 @@ export class MemoryMonitorStore implements MonitorStore {
         if (current.grantKey === "demo") {
           next = patchFired(next, undefined, true);
         } else {
-          if (!opts.consume) return { ok: false, reason: "unavailable", monitor: structuredClone(current) };
-          const spent = await opts.consume();
+          const grants = memoryGrants();
+          if (!grants) return { ok: false, reason: "unavailable", monitor: structuredClone(current) };
+          const spent = grants.convertNow(current.grantKey, current.id, opts.now);
           if (!spent.ok) {
             if (spent.reason === "unavailable") return { ok: false, reason: "unavailable", monitor: structuredClone(current) };
             const closed: Monitor = {
@@ -226,8 +255,20 @@ export class MemoryMonitorStore implements MonitorStore {
             this.track(closed);
             return { ok: false, reason: spent.reason, monitor: structuredClone(closed) };
           }
-          next = patchFired(next, spent.grant, Boolean(spent.demo));
+          next = patchFired(
+            next,
+            {
+              watchId: spent.binding.watchId,
+              used: spent.binding.used,
+              quota: spent.binding.quota,
+              expiresAt: spent.binding.expiresAt,
+              reserved: spent.binding.reserved ?? 0,
+            },
+            false,
+          );
         }
+      } else if (opts.op === "nomove" && current.grantKey !== "demo") {
+        memoryGrants()?.releaseNow(current.grantKey, current.id);
       }
       this.map.set(next.id, next);
       this.track(next);
@@ -298,7 +339,8 @@ export class MemoryMonitorStore implements MonitorStore {
   }
 }
 
-const FIRE_LUA = `
+export const FIRE_LUA = `-- harbinger-op:commit
+${GRANT_LUA_LIB}
 local function reply(obj)
   return cjson.encode(obj)
 end
@@ -315,28 +357,32 @@ if op == 'fire' and KEYS[4] and KEYS[4] ~= '' then
   local graw = redis.call('GET', KEYS[4])
   if not graw or graw == '' then return reply({ok=false, reason='unbound', monitor=cur}) end
   local b = cjson.decode(graw)
-  if now >= tonumber(b.expiresAt) then
-    cur.status = 'closed'
-    cur.closedReason = 'expired'
-    cur.version = tonumber(cur.version) + 1
-    redis.call('SET', KEYS[1], cjson.encode(cur))
-    redis.call('SREM', KEYS[2], cur.id)
-    return reply({ok=false, reason='expired', monitor=cur})
-  end
-  if tonumber(b.used) >= tonumber(b.quota) then
-    cur.status = 'closed'
-    cur.closedReason = 'exhausted'
-    cur.version = tonumber(cur.version) + 1
-    redis.call('SET', KEYS[1], cjson.encode(cur))
-    redis.call('SREM', KEYS[2], cur.id)
-    return reply({ok=false, reason='exhausted', monitor=cur})
-  end
-  b.used = tonumber(b.used) + 1
+  local why = h_convert(b, cur.id, now)
   redis.call('SET', KEYS[4], cjson.encode(b))
+  if why then
+    cur.status = 'closed'
+    cur.closedReason = why
+    cur.consumed = false
+    cur.version = tonumber(cur.version) + 1
+    redis.call('SET', KEYS[1], cjson.encode(cur))
+    redis.call('SREM', KEYS[2], cur.id)
+    return reply({ok=false, reason=why, monitor=cur})
+  end
   nxt.consumed = true
-  nxt.grant = { watchId = b.watchId, used = b.used, quota = tonumber(b.quota), expiresAt = tonumber(b.expiresAt) }
-  if nxt.ping and nxt.ping.grant then nxt.ping.grant.used = b.used end
+  nxt.grant = { watchId = b.watchId, used = b.used, quota = tonumber(b.quota), reserved = tonumber(b.reserved) or 0, expiresAt = tonumber(b.expiresAt) }
+  if nxt.ping and nxt.ping.grant then
+    nxt.ping.grant.used = b.used
+    nxt.ping.grant.quota = tonumber(b.quota)
+    nxt.ping.grant.reserved = tonumber(b.reserved) or 0
+  end
   if nxt.ping then nxt.deliveryBody = cjson.encode(nxt.ping) end
+elseif op == 'nomove' and KEYS[4] and KEYS[4] ~= '' then
+  local graw = redis.call('GET', KEYS[4])
+  if graw and graw ~= '' then
+    local b = cjson.decode(graw)
+    h_release(b, cur.id)
+    redis.call('SET', KEYS[4], cjson.encode(b))
+  end
 elseif op == 'fire' and nxt.ping and (not nxt.deliveryBody or nxt.deliveryBody == cjson.null) then
   nxt.deliveryBody = cjson.encode(nxt.ping)
 end
@@ -348,7 +394,8 @@ elseif nxt.hook then redis.call('SREM', KEYS[3], nxt.id) end
 return reply({ok=true, applied=true, monitor=nxt})
 `;
 
-const CREATE_LUA = `
+export const CREATE_LUA = `-- harbinger-op:create
+${GRANT_LUA_LIB}
 local existing = redis.call('GET', KEYS[1])
 if existing and existing ~= '' then
   local idx = cjson.decode(existing)
@@ -363,9 +410,21 @@ if existing and existing ~= '' then
     if incoming.grantKey ~= 'demo' and tonumber(incoming.generation) > tonumber(ARGV[4]) then return raw end
   end
 end
+local incoming = cjson.decode(ARGV[3])
+if KEYS[4] and KEYS[4] ~= '' then
+  local graw = redis.call('GET', KEYS[4])
+  if not graw or graw == '' then
+    return cjson.encode({__harbinger='reserve-failed', reason='unbound'})
+  end
+  local b = cjson.decode(graw)
+  local why = h_reserve(b, incoming.id, incoming.watchId, tonumber(incoming.startedAt) or 0)
+  if why then
+    return cjson.encode({__harbinger='reserve-failed', reason=why, binding=b})
+  end
+  redis.call('SET', KEYS[4], cjson.encode(b))
+end
 redis.call('SET', KEYS[1], ARGV[2])
 redis.call('SET', KEYS[2], ARGV[3])
-local incoming = cjson.decode(ARGV[3])
 if incoming.status == 'pending' then redis.call('SADD', KEYS[3], incoming.id) end
 return ARGV[3]
 `;
@@ -466,31 +525,44 @@ export class UpstashMonitorStore implements MonitorStore {
     return this.get(idx.id);
   }
 
-  async create(monitor: Monitor): Promise<Monitor> {
-    const raw = await this.cmd([
-      "EVAL",
-      CREATE_LUA,
-      3,
+  async create(monitor: Monitor, opts?: { reserve?: boolean }): Promise<CreateOutcome> {
+    const keys = [
       this.keys.index + indexKey(monitor.grantKey, monitor.watchId),
       this.keys.monitor + monitor.id,
       this.keys.pending,
+    ];
+    if (opts?.reserve && monitor.grantKey !== "demo") keys.push(this.keys.grant + monitor.grantKey.toLowerCase());
+    const raw = await this.cmd([
+      "EVAL",
+      CREATE_LUA,
+      keys.length,
+      ...keys,
       this.keys.monitor,
       JSON.stringify({ id: monitor.id, generation: monitor.generation }),
       JSON.stringify(monitor),
       MAX_GENERATION,
     ]);
-    return this.parse(raw) ?? monitor;
+    return this.readCreate(raw);
   }
 
-  async commit(opts: {
-    expectedVersion: number;
-    next: Monitor;
-    op: CommitOp;
-    now: number;
-    consume?: () => Promise<ConsumeOutcome>;
-  }): Promise<FinishResult> {
+  private readCreate(raw: unknown): CreateOutcome {
+    if (typeof raw !== "string" || raw === "") return { ok: false, reason: "unbound" };
+    const value = JSON.parse(raw) as { __harbinger?: string; reason?: GrantOpReason; binding?: GrantBinding } & Monitor;
+    if (value.__harbinger === "reserve-failed") {
+      return {
+        ok: false,
+        reason: value.reason ?? "unbound",
+        ...(value.binding ? { binding: normalizeBinding(value.binding) } : {}),
+      };
+    }
+    return { ok: true, monitor: fromLua(value) };
+  }
+
+  async commit(opts: { expectedVersion: number; next: Monitor; op: CommitOp; now: number }): Promise<FinishResult> {
     const keys = [this.keys.monitor + opts.next.id, this.keys.pending, this.keys.outbox];
-    if (opts.op === "fire" && opts.next.grantKey !== "demo") keys.push(this.keys.grant + opts.next.grantKey);
+    if ((opts.op === "fire" || opts.op === "nomove") && opts.next.grantKey !== "demo") {
+      keys.push(this.keys.grant + opts.next.grantKey.toLowerCase());
+    }
     const raw = await this.cmd([
       "EVAL",
       FIRE_LUA,
