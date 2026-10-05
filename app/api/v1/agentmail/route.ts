@@ -1,4 +1,5 @@
-import { H, MEDIA, PROTOCOL, corsHeaders, isValidGrant, mintReceipt, parseTxGrant, watchById } from "@/lib/protocol";
+import { H, MEDIA, PROTOCOL, corsHeaders, findWatch, grantDeniedResponse, mintReceipt, watchById } from "@/lib/protocol";
+import { checkGrant } from "@/lib/grant";
 
 export async function OPTIONS() {
   return new Response(null, { status: 204, headers: corsHeaders() });
@@ -32,11 +33,15 @@ export async function POST(request: Request) {
     });
   }
   if (action === "send") {
-    const watch = watchById(typeof body.watchId === "string" ? body.watchId : null);
-    if (!(await isValidGrant(grant, { minUsdc: watch.priceUsdc }))) {
-      return Response.json({ ok: false, forbidden: "grant-required" }, { status: 403 });
+    const watchIdRaw = typeof body.watchId === "string" ? body.watchId : null;
+    const found = findWatch(watchIdRaw);
+    const check = await checkGrant(grant, watchIdRaw, found, { consume: true });
+    if (!check.ok) {
+      if (check.status !== 403) return grantDeniedResponse(check, found ?? watchById(null), watchIdRaw);
+      return Response.json({ ok: false, forbidden: check.reason }, { status: 403 });
     }
-    const txRef = grant ? parseTxGrant(grant) : null;
+    const watch = found!;
+    const txRef = check.kind === "tx" ? check.txHash : null;
     const receipt = mintReceipt(watch.id, txRef);
     const event = watch.conditions.map((c) => c.event).join("+");
     return Response.json({ protocol: PROTOCOL, delivery: "agentmail", ping: { watchId: watch.id, receipt, event } });

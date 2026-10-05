@@ -1,4 +1,4 @@
-import { H, MEDIA, PROTOCOL, corsHeaders, challengeResponse, isValidGrant, parseTxGrant, settledPing, watchById } from "@/lib/protocol";
+import { H, MEDIA, PROTOCOL, corsHeaders, gateGrant, settledPing } from "@/lib/protocol";
 
 export const dynamic = "force-dynamic";
 
@@ -8,12 +8,25 @@ export async function OPTIONS() {
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const watch = watchById(request.headers.get(H.watch) ?? url.searchParams.get("watch"));
-  const grant = request.headers.get(H.grant);
-  if (!(await isValidGrant(grant, { minUsdc: watch.priceUsdc }))) return challengeResponse(watch);
+  const watchIdRaw = request.headers.get(H.watch) ?? url.searchParams.get("watch");
+  const gate = await gateGrant(request.headers.get(H.grant), watchIdRaw, { consume: true });
+  if (!gate.ok) return gate.response;
+  const { watch, check } = gate;
 
-  const txRef = grant ? parseTxGrant(grant) : null;
-  const ping = settledPing(watch, txRef);
+  const txRef = check.kind === "tx" ? check.txHash : null;
+  const ping = {
+    ...settledPing(watch, txRef),
+    ...(check.kind === "tx"
+      ? {
+          grant: {
+            watchId: check.binding.watchId,
+            used: check.binding.used,
+            quota: check.binding.quota,
+            expiresAt: new Date(check.binding.expiresAt).toISOString(),
+          },
+        }
+      : {}),
+  };
   const headers: Record<string, string> = {
     ...corsHeaders(),
     [H.version]: PROTOCOL,

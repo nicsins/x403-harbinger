@@ -68,6 +68,7 @@ Adjacent swarm-prediction work such as MiroFish is inspiration only. Harbinger s
 | `/.well-known/x403.json` | Alias that Links to canonical |
 | `/v1/index` | Listed services |
 | `/v1/watches` | Named watches |
+| `/v1/catalog/cards` | Public event cards (price, triggers, disclaimer). No key. |
 | `/v1/agency` | Persistent instrument + watch catalog |
 | `/v1/tape` | Free last prints — no grant |
 | `/v1/patrol` | Live sweep — 403 until grant |
@@ -85,6 +86,20 @@ Publishers serve `/.well-known/harbinger` as `application/vnd.x403.harbinger+jso
 - Asset: USDC
 - Network: Base (`eip155:8453`)
 - payTo: `0xDa1Eab46918882f8656a41cF9fCa80e2415369d1`
+
+### Grant binding (PROPOSED policy, see `lib/grant.ts` `GRANT_POLICY`)
+
+`hp1.<BaseTxHash>` is checked against the watch named in `X-Harbinger-Watch`:
+
+- Grant present but watch missing or unknown: **400**. No grant at all: **403** challenge, unchanged.
+- USDC `Transfer` logs to payTo in that tx are summed and must be at least the watch's `priceUsdc`.
+- The tx is bound to the first watch it is redeemed on. Other watches get **403** `grant-bound-to-other-watch`.
+- per-ping: `floor(paid / price)` pings (max 10), expiring 24h after first use. session: 24h from first use, max 288 requests.
+- Spent or expired gets **403** `grant-exhausted` / `grant-expired`. Records are kept, so a tx can never be re-bound.
+- `POST /v1/hooks` registers a delivery and spends one ping. Exhausted or differently bound grants are refused. Stream, patrol and AgentMail send each spend one.
+- Storage: Upstash Redis REST (`KV_REST_API_URL`/`KV_REST_API_TOKEN` or `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`).
+  Dev and preview fall back to in-memory. Production with no store answers tx grants with **503** (fail closed)
+  unless `GRANT_STORE=memory` is set on purpose (per-instance only, so replay is possible across instances).
 
 ## AgentMail
 

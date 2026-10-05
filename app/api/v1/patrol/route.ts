@@ -1,4 +1,4 @@
-import { H, MEDIA, PROTOCOL, challengeResponse, corsHeaders, isValidGrant, watchById } from "@/lib/protocol";
+import { H, MEDIA, PROTOCOL, corsHeaders, gateGrant } from "@/lib/protocol";
 import { runPatrol } from "@/lib/patrol";
 
 export const dynamic = "force-dynamic";
@@ -9,10 +9,12 @@ export async function OPTIONS() {
 }
 
 export async function POST(request: Request) {
-  const watch = watchById(request.headers.get(H.watch) ?? "w_btc_10_1h");
-  if (!(await isValidGrant(request.headers.get(H.grant), { minUsdc: watch.priceUsdc }))) {
-    return challengeResponse(watch);
-  }
+  // Patrol sweeps the whole book; it keeps its documented default watch for pricing,
+  // but the tx grant is still bound to that watch and consumes one use.
+  const gate = await gateGrant(request.headers.get(H.grant), request.headers.get(H.watch) ?? "w_btc_10_1h", {
+    consume: true,
+  });
+  if (!gate.ok) return gate.response;
   const snap = await runPatrol(true);
   return new Response(
     JSON.stringify(
