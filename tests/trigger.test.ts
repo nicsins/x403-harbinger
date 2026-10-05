@@ -4,12 +4,13 @@ import { createHmac } from "node:crypto";
 import { GET as streamGET } from "../app/api/v1/stream/route";
 import { POST as hooksPOST } from "../app/api/v1/hooks/route";
 import { GET as pumpGET } from "../app/api/v1/pump/route";
+import { POST as patrolPOST } from "../app/api/v1/patrol/route";
 import { publicCard } from "../lib/catalog";
 import { WATCHES } from "../lib/protocol";
-import { sharedMemoryStore } from "../lib/grant-store";
+import { applyRedeem, applyReserve, sharedMemoryStore, type GrantBinding } from "../lib/grant-store";
 import { quoteFromYahoo, QUOTE_MAX_AGE_MS, type Quote } from "../lib/markets";
 import { advanceMonitor, REARM_LIMIT, setDeliverForTests, setNowForTests, setQuotesForTests } from "../lib/monitor";
-import { fromLua, MAX_GENERATION, monitorStoreFromEnv, sharedMemoryMonitor, UpstashMonitorStore, type Monitor } from "../lib/monitor-store";
+import { fromLua, MAX_GENERATION, monitorId, monitorStoreFromEnv, sharedMemoryMonitor, UpstashMonitorStore, type CreateOutcome, type Monitor } from "../lib/monitor-store";
 import { grantStoreFromEnv, UpstashGrantStore } from "../lib/grant-store";
 import { envKeyPrefix, storeKeys } from "../lib/store-keys";
 import { guardedLookup, validateCallbackUrl } from "../lib/hook";
@@ -52,8 +53,40 @@ type Fired = {
   logic: string;
   samples: number;
   legs: { instrumentId: string; matched: boolean; pct: number; baseline: number; price: number; direction: string }[];
-  grant?: { used: number; quota: number; kind?: string };
+  grant?: { used: number; quota: number; reserved?: number; kind?: string };
 };
+
+function opened(result: CreateOutcome): Monitor {
+  if (!result.ok) throw new Error(result.reason);
+  return result.monitor;
+}
+
+function pendingMonitor(grantKey: string, id = monitorId(grantKey, "w_btc_10_1h", 1)): Monitor {
+  return {
+    id,
+    version: 1,
+    generation: 1,
+    grantKey,
+    grantRaw: `hp1.${grantKey}`,
+    watchId: "w_btc_10_1h",
+    status: "pending",
+    startedAt: T0,
+    deadlineAt: T0 + HOUR,
+    baseline: null,
+    samples: [],
+    firedAt: null,
+    correlation: null,
+    correlationNote: null,
+    receipt: null,
+    ping: null,
+    deliveryBody: null,
+    consumed: false,
+  };
+}
+
+function seedBinding(quota = 1): GrantBinding {
+  return { watchId: "w_btc_10_1h", quota, used: 0, reserved: 0, boundAt: T0, expiresAt: T0 + DAY, paidAtomic: String(quota * 220000) };
+}
 
 let rpc: ReturnType<typeof mockRpc>;
 let restoreEnv: () => void;
@@ -360,13 +393,14 @@ describe("stream monitor", () => {
     useQuotes((symbols, now) => symbols.map((symbol) => q(symbol, 100, now)));
     const res = await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") });
     assert.equal(res.status, 200);
-    const body = (await res.json()) as { status: string; firedAt: null; grant: { used: number; quota: number }; baselineReady: boolean };
+    const body = (await res.json()) as { status: string; firedAt: null; grant: { used: number; quota: number; reserved: number }; baselineReady: boolean };
     assert.equal(body.status, "pending");
     assert.equal(body.firedAt, null);
     assert.equal(body.baselineReady, true);
-    assert.deepEqual([body.grant.used, body.grant.quota], [0, 1]);
+    assert.deepEqual([body.grant.used, body.grant.quota, body.grant.reserved], [0, 1, 1]);
     assert.equal(res.headers.get("X-Harbinger-Correlation"), "n/a");
     assert.equal((await sharedMemoryStore().get(REAL_TX))?.used, 0);
+    assert.equal((await sharedMemoryStore().get(REAL_TX))?.reserved, 1);
   });
 
   test("a post-start cross returns one ping, the sample time, and one spend", async () => {
@@ -396,8 +430,10 @@ describe("stream monitor", () => {
     assert.equal(body.legs[0]?.price, 120);
     assert.equal(body.legs[0]?.pct, 20);
     assert.equal(body.grant?.used, 1);
+    assert.equal(body.grant?.reserved, 0);
     assert.match(body.receipt, /^rcpt\.w_btc_10_1h\.c3fd6b6f\./);
     assert.equal((await sharedMemoryStore().get(REAL_TX))?.used, 1);
+    assert.equal((await sharedMemoryStore().get(REAL_TX))?.reserved, 0);
 
     const replay = await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") });
     assert.equal(replay.status, 403);
@@ -636,7 +672,12 @@ describe("hooks", () => {
     assert.equal(second.delivered, 1);
     assert.equal(posts.length, 2);
     assert.equal(posts[0]!.body, posts[1]!.body);
-    assert.equal((await sharedMemoryStore().get(REAL_TX))?.used, 1);
+    const ping = JSON.parse(posts[0]!.body) as Fired;
+    assert.equal(ping.grant?.used, 1);
+    assert.equal(ping.grant?.reserved, 0);
+    const after = await sharedMemoryStore().get(REAL_TX);
+    assert.equal(after?.used, 1);
+    assert.equal(after?.reserved, 0);
   });
 
   test("no-move does not deliver and does not spend", async () => {
@@ -759,6 +800,8 @@ describe("upstash monitor wire", () => {
       assert.ok(fire);
       assert.ok(fire!.some((part) => part === `harbinger:monitor:mon_test`));
       assert.ok(fire!.some((part) => part === `harbinger:grant:${REAL_TX}`));
+      assert.equal(fire!.some((part) => part.startsWith("preview:") || part.startsWith("dev:")), false);
+      assert.equal(seen.some((row) => row.some((part) => part.startsWith("preview:") || part.startsWith("dev:"))), false);
     } finally {
       globalThis.fetch = orig;
     }
@@ -874,6 +917,16 @@ describe("forge PR #8 findings + rearm cap", () => {
         assert.ok(fire.includes(k), k);
       }
       assert.equal(fire.some((part) => /^harbinger:/.test(part)), false);
+      const armed = pendingMonitor(REAL_TX, "mon_arm");
+      await ms.create(armed, { reserve: true });
+      const create = seen[5]!;
+      assert.equal(create[0], "EVAL");
+      assert.match(create[1]!, /^-- harbinger-op:create/);
+      assert.equal(create[2], "4");
+      for (const k of ["preview:harbinger:monitor:mon_arm", "preview:harbinger:monitor-pending", `preview:harbinger:grant:${REAL_TX}`]) {
+        assert.ok(create.includes(k), k);
+      }
+      assert.equal(create.some((part) => /^harbinger:/.test(part)), false);
     } finally {
       restore();
       globalThis.fetch = orig;
@@ -905,11 +958,14 @@ describe("forge PR #8 findings + rearm cap", () => {
     for (let i = 1; i <= REARM_LIMIT; i++) {
       now += HOUR;
       setNowForTests(now);
-      const done = (await (await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") })).json()) as { status: string };
+      const done = (await (await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") })).json()) as { status: string; grant: { used: number; reserved: number } };
       assert.equal(done.status, "no-move");
+      assert.deepEqual([done.grant.used, done.grant.reserved], [0, 0]);
       const re = await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") }, "?rearm=1");
       assert.equal(re.status, 200, `rearm ${i}`);
-      assert.equal(((await re.json()) as { status: string }).status, "pending");
+      const reBody = (await re.json()) as { status: string; grant: { used: number; reserved: number } };
+      assert.equal(reBody.status, "pending");
+      assert.deepEqual([reBody.grant.used, reBody.grant.reserved], [0, 1]);
     }
     now += HOUR;
     setNowForTests(now);
@@ -926,7 +982,12 @@ describe("forge PR #8 findings + rearm cap", () => {
     assert.equal("rearm" in after, false);
     assert.equal(after.rearmsLeft, 0);
     assert.equal(JSON.stringify(after).includes("Rearm"), false);
-    assert.equal((await sharedMemoryStore().get(REAL_TX))?.used, 0);
+    const held = await sharedMemoryStore().get(REAL_TX);
+    assert.equal(held?.used, 0);
+    assert.equal(held?.reserved, 0);
+    const last = await sharedMemoryMonitor().find(REAL_TX, "w_btc_10_1h");
+    assert.equal(last?.generation, MAX_GENERATION);
+    assert.equal(last?.status, "no-move");
   });
 
   test("shared demo monitor is not rearm-capped (preview/dev only)", async () => {
@@ -987,24 +1048,24 @@ describe("second review: rearm rules, freshness, expiry", () => {
     const store = sharedMemoryMonitor();
     const base = { version: 1, grantRaw: "x", watchId: "w_btc_10_1h", startedAt: T0, deadlineAt: T0 + HOUR, baseline: null, samples: [], firedAt: null, correlation: null, correlationNote: null, receipt: null, ping: null, deliveryBody: null, consumed: false };
     const mk = (grantKey: string, generation: number, status: Monitor["status"]): Monitor => ({ ...base, id: `m_${grantKey}_${generation}`, grantKey, generation, status }) as Monitor;
-    const g1 = await store.create(mk(REAL_TX, 1, "pending"));
-    assert.equal((await store.create(mk(REAL_TX, 2, "pending"))).id, g1.id);
+    const g1 = opened(await store.create(mk(REAL_TX, 1, "pending")));
+    assert.equal(opened(await store.create(mk(REAL_TX, 2, "pending"))).id, g1.id);
     await store.commit({ expectedVersion: g1.version, next: { ...g1, status: "fired" }, op: "save", now: T0 });
-    assert.equal((await store.create(mk(REAL_TX, 2, "pending"))).id, g1.id);
+    assert.equal(opened(await store.create(mk(REAL_TX, 2, "pending"))).id, g1.id);
     for (let gen = 1; gen <= MAX_GENERATION; gen++) {
       const tx = synthTx(500);
-      const cur = gen === 1 ? await store.create(mk(tx, 1, "pending")) : (await store.find(tx, "w_btc_10_1h"))!;
+      const cur = gen === 1 ? opened(await store.create(mk(tx, 1, "pending"))) : (await store.find(tx, "w_btc_10_1h"))!;
       assert.equal(cur.generation, gen);
       await store.commit({ expectedVersion: cur.version, next: { ...cur, status: "no-move" }, op: "nomove", now: T0 });
-      if (gen < MAX_GENERATION) assert.equal((await store.create(mk(tx, gen + 1, "pending"))).generation, gen + 1);
+      if (gen < MAX_GENERATION) assert.equal(opened(await store.create(mk(tx, gen + 1, "pending"))).generation, gen + 1);
     }
-    const capped = await store.create(mk(synthTx(500), MAX_GENERATION + 1, "pending"));
+    const capped = opened(await store.create(mk(synthTx(500), MAX_GENERATION + 1, "pending")));
     assert.equal(capped.generation, MAX_GENERATION);
     assert.equal(capped.status, "no-move");
-    let demo = await store.create(mk("demo", 1, "pending"));
+    let demo = opened(await store.create(mk("demo", 1, "pending")));
     for (let gen = 2; gen <= MAX_GENERATION + 2; gen++) {
       await store.commit({ expectedVersion: demo.version, next: { ...demo, status: "no-move" }, op: "nomove", now: T0 });
-      demo = await store.create(mk("demo", gen, "pending"));
+      demo = opened(await store.create(mk("demo", gen, "pending")));
       assert.equal(demo.generation, gen);
     }
   });
@@ -1085,5 +1146,188 @@ describe("second review: rearm rules, freshness, expiry", () => {
     const b = (await (await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") })).json()) as { rearm?: string; rearmsLeft?: number };
     assert.equal(b.rearm, "X-Harbinger-Rearm: 1");
     assert.equal(b.rearmsLeft, MAX_GENERATION - 1);
+  });
+});
+
+describe("quota reservation", () => {
+  const flat = () => useQuotes((symbols, now) => symbols.map((symbol) => q(symbol, 100, now - 15_000)));
+  const patrol = (tx: string) =>
+    patrolPOST(new Request(`${BASE}/v1/patrol`, { method: "POST", headers: { ...G(tx), ...W("w_btc_10_1h") } }));
+
+  test("a fire converts once; a second convert or pump does not spend again", async () => {
+    useQuotes((symbols, now) => symbols.map((symbol) => q(symbol, now === T0 ? 100 : 120, now === T0 ? T0 : now - 15_000)));
+    const armed = (await (await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") })).json()) as { grant: { used: number; reserved: number }; monitorId: string };
+    assert.deepEqual([armed.grant.used, armed.grant.reserved], [0, 1]);
+    setNowForTests(T0 + 60_000);
+    const fired = (await (await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") })).json()) as Fired;
+    assert.equal(fired.status, "fired");
+    assert.equal(fired.grant?.used, 1);
+    assert.equal(fired.grant?.reserved, 0);
+    const again = await sharedMemoryStore().convert(REAL_TX, fired.monitorId, T0 + 60_000);
+    assert.equal(again.ok && again.idempotent, true);
+    const ran = (await (await pump()).json()) as { fired: number };
+    assert.equal(ran.fired, 0);
+    const b = await sharedMemoryStore().get(REAL_TX);
+    assert.equal(b?.used, 1);
+    assert.equal(b?.reserved, 0);
+    const replay = await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") });
+    assert.equal(replay.status, 403);
+    assert.equal(replay.headers.get("X-Harbinger-Forbidden"), "grant-exhausted");
+    assert.equal((await patrol(REAL_TX)).status, 403);
+  });
+
+  test("no-move releases the hold and patrol can spend it", async () => {
+    flat();
+    const armed = (await (await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") })).json()) as { grant: { reserved: number; used: number } };
+    assert.deepEqual([armed.grant.used, armed.grant.reserved], [0, 1]);
+    assert.equal((await patrol(REAL_TX)).status, 409);
+    setNowForTests(T0 + HOUR);
+    const done = (await (await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") })).json()) as { status: string; grant: { used: number; reserved: number } };
+    assert.equal(done.status, "no-move");
+    assert.deepEqual([done.grant.used, done.grant.reserved], [0, 0]);
+    assert.equal((await patrol(REAL_TX)).status, 200);
+    const b = await sharedMemoryStore().get(REAL_TX);
+    assert.equal(b?.used, 1);
+    assert.equal(b?.reserved, 0);
+  });
+
+  test("the pump releases a monitor that reached its deadline, and a second pass does not release again", async () => {
+    flat();
+    const armed = (await (await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") })).json()) as { monitorId: string; grant: { reserved: number } };
+    assert.equal(armed.grant.reserved, 1);
+    setNowForTests(T0 + HOUR);
+    const ran = (await (await pump()).json()) as { noMove: number };
+    assert.equal(ran.noMove, 1);
+    const m = await sharedMemoryMonitor().get(armed.monitorId);
+    assert.equal(m?.status, "no-move");
+    assert.equal((await sharedMemoryMonitor().listPending()).length, 0);
+    const b = await sharedMemoryStore().get(REAL_TX);
+    assert.equal(b?.reserved, 0);
+    assert.equal(b?.used, 0);
+    const second = (await (await pump()).json()) as { noMove: number };
+    assert.equal(second.noMove, 0);
+    const extra = await sharedMemoryStore().release(REAL_TX, armed.monitorId);
+    assert.equal(extra.released, false);
+    assert.equal((await sharedMemoryStore().get(REAL_TX))?.reserved, 0);
+    assert.equal((await sharedMemoryStore().get(REAL_TX))?.used, 0);
+  });
+
+  test("memory arm and direct spend on quota 1: exactly one wins", async () => {
+    for (const order of ["arm", "spend"] as const) {
+      const tx = synthTx(order === "arm" ? 610 : 611);
+      const grants = sharedMemoryStore();
+      await grants.redeem(tx, "w_btc_10_1h", T0, false, seedBinding());
+      const arm = () => sharedMemoryMonitor().create(pendingMonitor(tx), { reserve: true });
+      const spend = () => grants.redeem(tx, "w_btc_10_1h", T0, true);
+      const [created, spent] = order === "arm"
+        ? await Promise.all([arm(), spend()])
+        : await Promise.all([spend(), arm()]).then(([spentFirst, createdSecond]) => [createdSecond, spentFirst] as const);
+      const b = await grants.get(tx);
+      const armWon = created.ok && !spent.ok && spent.reason === "reserved" && b?.used === 0 && b.reserved === 1;
+      const spendWon = !created.ok && spent.ok && b?.used === 1 && (b?.reserved ?? 0) === 0;
+      assert.equal(armWon || spendWon, true, order);
+      assert.notEqual(armWon, spendWon);
+    }
+  });
+
+  test("lua wire mock: arm and redeem on quota 1, the first EVAL wins, preview keys on both", async () => {
+    const keys = storeKeys({ VERCEL_ENV: "preview" });
+    for (const order of ["arm", "spend"] as const) {
+      const tx = synthTx(order === "arm" ? 601 : 602);
+      const kv = new Map<string, string>();
+      kv.set(keys.grant + tx, JSON.stringify(seedBinding()));
+      const seen: string[][] = [];
+      const exec = (args: string[]): unknown => {
+        if (args[0] === "GET") return kv.get(args[1]!) ?? null;
+        if (args[0] === "SET") {
+          kv.set(args[1]!, args[2]!);
+          return "OK";
+        }
+        if (args[0] !== "EVAL") return null;
+        const n = Number(args[2]);
+        const keyList = args.slice(3, 3 + n);
+        const argv = args.slice(3 + n);
+        const op = /^-- harbinger-op:(\w+)/.exec(args[1] ?? "")?.[1];
+        if (op === "redeem") {
+          const key = keyList[0]!;
+          const had = kv.get(key);
+          const { result, next } = applyRedeem(
+            had ? (JSON.parse(had) as GrantBinding) : null,
+            argv[0]!,
+            Number(argv[1]),
+            argv[2] === "1",
+            argv[3] ? (JSON.parse(argv[3]) as GrantBinding) : undefined,
+          );
+          if (result.ok && next) kv.set(key, JSON.stringify(next));
+          else if (!had && next) kv.set(key, JSON.stringify(next));
+          return JSON.stringify(result.ok ? { ok: true, binding: result.binding } : { ok: false, reason: result.reason, ...(result.binding ? { binding: result.binding } : {}) });
+        }
+        if (op === "create") {
+          const grantKey = keyList[3];
+          const incoming = JSON.parse(argv[2]!) as Monitor;
+          if (grantKey) {
+            const raw = kv.get(grantKey);
+            if (!raw) return JSON.stringify({ __harbinger: "reserve-failed", reason: "unbound" });
+            const { result, next } = applyReserve(JSON.parse(raw) as GrantBinding, incoming.id, incoming.watchId, Number(incoming.startedAt) || 0);
+            if (!result.ok) return JSON.stringify({ __harbinger: "reserve-failed", reason: result.reason, ...(result.binding ? { binding: result.binding } : {}) });
+            if (next) kv.set(grantKey, JSON.stringify(next));
+          }
+          kv.set(keyList[0]!, argv[1]!);
+          kv.set(keyList[1]!, argv[2]!);
+          return argv[2];
+        }
+        return null;
+      };
+      const orig = globalThis.fetch;
+      globalThis.fetch = ((_url: unknown, init?: { body?: unknown }) => {
+        const args = JSON.parse(String(init?.body ?? "[]")) as string[];
+        seen.push(args);
+        return Promise.resolve(Response.json({ result: exec(args) }));
+      }) as typeof fetch;
+      try {
+        const grants = new UpstashGrantStore("https://kv.example", "t", keys.grant);
+        const monitors = new UpstashMonitorStore("https://kv.example", "t", keys);
+        const arm = () => monitors.create(pendingMonitor(tx), { reserve: true });
+        const spend = () => grants.redeem(tx, "w_btc_10_1h", T0, true);
+        const [created, spent] = order === "arm"
+          ? await Promise.all([arm(), spend()])
+          : await Promise.all([spend(), arm()]).then(([spentFirst, createdSecond]) => [createdSecond, spentFirst] as const);
+        const b = JSON.parse(kv.get(keys.grant + tx)!) as GrantBinding;
+        if (order === "arm") {
+          assert.equal(created.ok, true);
+          assert.equal(spent.ok, false);
+          assert.equal(!spent.ok && spent.reason, "reserved");
+          assert.equal(b.reserved, 1);
+          assert.equal(b.used, 0);
+        } else {
+          assert.equal(created.ok, false);
+          assert.equal(!created.ok && created.reason, "exhausted");
+          assert.equal(spent.ok, true);
+          assert.equal(b.used, 1);
+          assert.equal(b.reserved, 0);
+        }
+        const create = seen.find((row) => row[1]?.startsWith("-- harbinger-op:create"));
+        assert.ok(create);
+        assert.ok(create!.includes(`preview:harbinger:grant:${tx}`));
+        assert.ok(create!.includes(`preview:harbinger:monitor:${pendingMonitor(tx).id}`));
+        assert.equal(create!.some((part) => /^harbinger:/.test(part)), false);
+      } finally {
+        globalThis.fetch = orig;
+      }
+    }
+  });
+
+  test("http arm and patrol on quota 1: exactly one wins", async () => {
+    flat();
+    const pair = await Promise.race([
+      Promise.all([stream({ ...G(REAL_TX), ...W("w_btc_10_1h") }), patrol(REAL_TX)]),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("arm/patrol race hung")), 3000)),
+    ]);
+    const [armed, swept] = pair;
+    const b = await sharedMemoryStore().get(REAL_TX);
+    const armWon = armed.status === 200 && swept.status === 409 && b?.used === 0 && b.reserved === 1;
+    const spendWon = armed.status === 403 && swept.status === 200 && b?.used === 1 && (b.reserved ?? 0) === 0;
+    assert.equal(armWon || spendWon, true, `stream ${armed.status} patrol ${swept.status} used ${b?.used} reserved ${b?.reserved}`);
+    assert.notEqual(armWon, spendWon);
   });
 });
