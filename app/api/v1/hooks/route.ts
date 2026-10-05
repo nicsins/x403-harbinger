@@ -17,9 +17,9 @@ export async function POST(request: Request) {
     request.headers.get(H.watch);
   const watch = findWatch(watchIdRaw);
 
-  // Register is intake only (no ping delivered), so it binds the tx to the watch
-  // and checks TTL/quota but does not consume a use.
-  const check = await checkGrant(request.headers.get(H.grant), watchIdRaw, watch, { consume: false });
+  // Hook registration is the metered delivery event: consume one quota unit,
+  // exactly like stream. This prevents exhausted grants from re-registering.
+  const check = await checkGrant(request.headers.get(H.grant), watchIdRaw, watch, { consume: true });
   if (!check.ok) {
     if (check.status !== 403) return grantDeniedResponse(check, watch ?? watchById(null), watchIdRaw);
     return new Response(JSON.stringify({ forbidden: check.reason }), {
