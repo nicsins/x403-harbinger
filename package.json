@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:unit": "HARBINGER_SKIP_LIVE=1 node --import tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit -p ."
   },
   "dependencies": {
     "next": "15.5.7",
@@ -17,6 +20,7 @@
     "@types/node": "22.16.5",
     "@types/react": "19.1.8",
     "@types/react-dom": "19.1.6",
+    "tsx": "4.23.15",
     "typescript": "5.8.3"
   },
   "engines": {
