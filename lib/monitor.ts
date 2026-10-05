@@ -1,18 +1,19 @@
 /** Condition-gated paid ping.
  *
- * A grant is validated and bound with consume:false. The first fresh quote is
- * the baseline and cannot fire. A later quote, strictly after `startedAt` and
- * inside the watch window, fires once and spends one quota unit. If the window
- * ends first, the result is `no-move`: quota is unchanged and no refund is
- * written. That credit rule is awaiting Nic's sign-off.
+ * A grant is validated and bound with consume:false. Arming a tx monitor
+ * reserves one unit (`reserved`). The first fresh quote is the baseline and
+ * cannot fire. A later quote, strictly after `startedAt` and inside the watch
+ * window, fires once and converts that hold into a spend. If the window ends
+ * first, the result is `no-move`: the hold is released, `used` is unchanged,
+ * and nothing already spent is refunded. That credit rule is awaiting Nic's
+ * sign-off. Demo grants have no binding, so they skip the counter.
  *
  * SSE does not stay open for the watch window. Clients poll. Hook callbacks are
  * queued here and posted by the scheduled pump. Catalog copy still marks
  * webhook outbound not-live until a preview probe.
  */
 import { INSTRUMENTS, WATCH_BOOK } from "@/lib/agency";
-import { checkGrant, parseTxGrant } from "@/lib/grant";
-import { grantStoreFromEnv } from "@/lib/grant-store";
+import { grantStoreFromEnv, type GrantBinding, type GrantOpReason } from "@/lib/grant-store";
 import { postHook, signHookBody, type DeliveryResult } from "@/lib/hook";
 import { fetchQuotes, type Quote } from "@/lib/markets";
 import {
@@ -21,8 +22,7 @@ import {
   monitorStoreFromEnv,
   REARM_LIMIT,
   resetSharedMonitor,
-  type ConsumeOutcome,
-  type GrantSnap,
+  type CreateOutcome,
   type Monitor,
   type MonitorStore,
 } from "@/lib/monitor-store";
@@ -163,6 +163,7 @@ function blank(
             watchId: check.binding.watchId,
             used: check.binding.used,
             quota: check.binding.quota,
+            reserved: check.binding.reserved ?? 0,
             expiresAt: check.binding.expiresAt,
           },
         }
@@ -218,33 +219,11 @@ function buildPing(m: Monitor, watch: Watch, decision: Extract<TriggerDecision, 
       watchId: m.grant.watchId,
       used: m.grant.used,
       quota: m.grant.quota,
+      reserved: m.grant.reserved ?? 0,
       expiresAt: new Date(m.grant.expiresAt).toISOString(),
     };
   }
   return ping;
-}
-
-function consumeFor(m: Monitor, now: number): () => Promise<ConsumeOutcome> {
-  return async () => {
-    const store = grantStoreFromEnv();
-    if (!store) return { ok: false, reason: "unavailable" };
-    const watch = findWatch(m.watchId);
-    const check = await checkGrant(m.grantRaw, m.watchId, watch, { consume: true, now, store });
-    if (!check.ok) {
-      if (check.status === 503) return { ok: false, reason: "unavailable" };
-      if (check.reason === "grant-expired") return { ok: false, reason: "expired" };
-      if (check.reason === "grant-exhausted") return { ok: false, reason: "exhausted" };
-      return { ok: false, reason: "unbound" };
-    }
-    if (check.kind !== "tx") return { ok: true, demo: true };
-    const grant: GrantSnap = {
-      watchId: check.binding.watchId,
-      used: check.binding.used,
-      quota: check.binding.quota,
-      expiresAt: check.binding.expiresAt,
-    };
-    return { ok: true, grant };
-  };
 }
 
 async function applyStep(store: MonitorStore, current: Monitor, watch: Watch, decision: TriggerDecision, now: number): Promise<Monitor> {
@@ -286,7 +265,6 @@ async function applyStep(store: MonitorStore, current: Monitor, watch: Watch, de
     next,
     op,
     now,
-    consume: op === "fire" ? consumeFor(current, now) : undefined,
   });
   if (res.monitor) return res.monitor;
   if (!res.ok && res.reason === "conflict") {
@@ -343,6 +321,7 @@ async function liveGrant(m: Monitor): Promise<Record<string, unknown> | undefine
     watchId: snap.watchId,
     used: snap.used,
     quota: snap.quota,
+    reserved: snap.reserved ?? 0,
     expiresAt: new Date(snap.expiresAt).toISOString(),
   };
 }
@@ -404,6 +383,7 @@ export async function renderMonitor(m: Monitor, watch: Watch): Promise<PollResul
   };
 }
 
+/** Actually spent, not merely held. A pending hold is rearm-not-allowed, not exhausted. */
 function quotaSpent(check: OkCheck): boolean {
   return check.kind === "tx" && check.binding.used >= check.binding.quota;
 }
@@ -442,17 +422,50 @@ function rearmNotAllowed(watch: Watch, status: string): PollDenied {
   });
 }
 
+export type HoldLookup = { settled: boolean; pending: { id: string; deadlineAt: number } | null };
+
 /**
- * Patrol stopgap until full quota reservation: a pending, unexpired monitor for
- * the same tx grant + watch holds the grant. Returns that monitor, or null.
+ * Called after a direct spend failed with `reserved`; this is not the gate.
+ * A hold whose window already ended is settled first: the daily cron may not
+ * have run, and nobody may have polled the stream since the deadline. Settling
+ * goes through advanceMonitor, so it is the same no-move (release) or in-window
+ * fire (convert) the pump would commit. `settled: true` means the caller should
+ * retry the spend once. Otherwise `pending` enriches the 409.
  */
-export async function pendingReservation(grantRaw: string | null | undefined, watchId: string, now: number): Promise<Monitor | null> {
-  const tx = grantRaw ? parseTxGrant(grantRaw) : null;
-  if (!tx) return null;
-  const store = monitorStoreFromEnv();
-  if (!store) return null;
-  const m = await store.find(tx, watchId);
-  return m && m.status === "pending" && m.deadlineAt > now ? m : null;
+export async function settleOverdueHold(grantKey: string, watchId: string, now: number): Promise<HoldLookup> {
+  try {
+    const store = monitorStoreFromEnv();
+    if (!store) return { settled: false, pending: null };
+    const m = await store.find(grantKey, watchId);
+    if (!m || m.status !== "pending") return { settled: false, pending: null };
+    const held = { id: m.id, deadlineAt: m.deadlineAt };
+    const watch = findWatch(m.watchId);
+    if (now < m.deadlineAt || !watch) return { settled: false, pending: held };
+    const next = await advanceMonitor(m, watch, now, store);
+    return next.status === "pending" ? { settled: false, pending: held } : { settled: true, pending: null };
+  } catch {
+    return { settled: false, pending: null };
+  }
+}
+
+/** Enrich a 409 with the monitor holding the unit. */
+export async function lookupPendingMonitor(grantKey: string, watchId: string): Promise<{ id: string; deadlineAt: number } | null> {
+  return (await settleOverdueHold(grantKey, watchId, -Infinity)).pending;
+}
+
+function reserveDenied(check: TxCheck, watch: Watch, reason: GrantOpReason, binding?: GrantBinding): PollDenied {
+  if (reason === "unavailable") return storeUnavailable(check, watch);
+  const mapped =
+    reason === "expired" ? "grant-expired" : reason === "watch-mismatch" ? "grant-bound-to-other-watch" : reason === "unbound" ? "grant-required" : "grant-exhausted";
+  return denied(
+    { ok: false, status: 403, reason: mapped, txHash: check.txHash, ...(binding ? { binding } : { binding: check.binding }) },
+    watch,
+  );
+}
+
+async function openMonitor(store: MonitorStore, check: OkCheck, incoming: Monitor): Promise<CreateOutcome> {
+  if (check.kind !== "tx") return store.create(incoming);
+  return store.create(incoming, { reserve: true });
 }
 
 function storeUnavailable(check: OkCheck, watch: Watch): PollDenied {
@@ -497,8 +510,12 @@ export async function pollStream(opts: { watch: Watch; check: OkCheck; grantRaw:
   }
 
   const generation = existing ? existing.generation + 1 : 1;
-  const created = await store.create(blank(opts.check, opts.watch, opts.grantRaw, opts.now, generation));
-  const next = await advanceMonitor(created, opts.watch, opts.now, store);
+  const opened = await openMonitor(store, opts.check, blank(opts.check, opts.watch, opts.grantRaw, opts.now, generation));
+  if (!opened.ok) {
+    if (opts.check.kind !== "tx") return storeUnavailable(opts.check, opts.watch);
+    return reserveDenied(opts.check, opts.watch, opened.reason, opened.binding);
+  }
+  const next = await advanceMonitor(opened.monitor, opts.watch, opts.now, store);
   return renderMonitor(next, opts.watch);
 }
 
@@ -506,7 +523,7 @@ export type HookArm =
   | { ok: true; monitorId: string | null }
   | { ok: false; denied: PollDenied };
 
-/** Arm or refresh a callback subscription. Does not spend quota. */
+/** Arm or refresh a callback subscription. Does not spend. A new tx arm reserves one unit. */
 export async function registerHook(opts: {
   watch: Watch;
   check: OkCheck;
@@ -547,9 +564,13 @@ export async function registerHook(opts: {
   // explicit stream rearm, so a retried POST cannot reset the clock.
   if (existing?.status === "no-move") return { ok: true, monitorId: existing.id };
   const generation = existing ? existing.generation + 1 : 1;
-  const created = await store.create(blank(opts.check, opts.watch, opts.grantRaw, opts.now, generation, opts.url));
-  await advanceMonitor(created, opts.watch, opts.now, store);
-  return { ok: true, monitorId: created.id };
+  const opened = await openMonitor(store, opts.check, blank(opts.check, opts.watch, opts.grantRaw, opts.now, generation, opts.url));
+  if (!opened.ok) {
+    if (opts.check.kind !== "tx") return { ok: false, denied: storeUnavailable(opts.check, opts.watch) };
+    return { ok: false, denied: reserveDenied(opts.check, opts.watch, opened.reason, opened.binding) };
+  }
+  await advanceMonitor(opened.monitor, opts.watch, opts.now, store);
+  return { ok: true, monitorId: opened.monitor.id };
 }
 
 export type PumpReport = {
