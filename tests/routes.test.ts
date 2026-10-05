@@ -4,8 +4,10 @@ import { GET as streamGET } from "../app/api/v1/stream/route";
 import { POST as hooksPOST } from "../app/api/v1/hooks/route";
 import { POST as patrolPOST } from "../app/api/v1/patrol/route";
 import { POST as mailPOST } from "../app/api/v1/agentmail/route";
-import { REAL_TX, MARKET_TX, FAKE_TX, mockRpc, defaultReceipts, withEnv, resetSharedStore } from "./helpers";
+import { REAL_TX, MARKET_TX, FAKE_TX, mockRpc, defaultReceipts, withEnv, resetSharedStore, synthTx, transferLog } from "./helpers";
 import { sharedMemoryStore } from "../lib/grant-store";
+import { runPump, setNowForTests, setQuotesForTests } from "../lib/monitor";
+import { monitorId, sharedMemoryMonitor } from "../lib/monitor-store";
 
 const BASE = "https://www.x403-harbinger.com";
 const stream = (headers: Record<string, string>, qs = "") =>
@@ -65,7 +67,7 @@ describe("GET /v1/stream", () => {
       settleTx: string;
       firedAt: null;
       correlation: number | null;
-      grant: { used: number; quota: number };
+      grant: { used: number; quota: number; reserved: number };
       monitorId: string;
     };
     assert.equal(body.status, "pending");
@@ -74,7 +76,7 @@ describe("GET /v1/stream", () => {
     assert.equal(body.firedAt, null);
     assert.equal(body.correlation, null);
     assert.notEqual(body.correlation, 0.99);
-    assert.deepEqual([body.grant.used, body.grant.quota], [0, 1]);
+    assert.deepEqual([body.grant.used, body.grant.quota, body.grant.reserved], [0, 1, 1]);
 
     const again = await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") });
     assert.equal(again.status, 200);
@@ -131,18 +133,32 @@ describe("POST /v1/hooks", () => {
     assert.deepEqual(await a.json(), { protocol: "x403-HARBINGER/1.0", accepted: true, watchId: "w_eth_btc_join" });
     const again = await hooks({ ...G(REAL_TX), ...W("w_eth_btc_join") });
     assert.equal(again.status, 200);
+    setQuotesForTests(async (symbols) =>
+      symbols.map((symbol) => ({ symbol, price: null, asOf: null, ok: false, stale: true, source: "yahoo-chart" as const, interval: "1m" as const })),
+    );
     const armed = await stream({ ...G(REAL_TX), ...W("w_eth_btc_join") });
     assert.equal(armed.status, 200);
-    assert.equal(((await armed.json()) as { grant: { used: number } }).grant.used, 0);
+    assert.equal(((await armed.json()) as { grant: { used: number; reserved: number } }).grant.used, 0);
+    assert.equal((await sharedMemoryStore().get(REAL_TX))?.reserved, 1);
 
-    // A pending ping holds the grant: patrol is refused before it can spend.
+    // A pending ping holds the grant: patrol and agentmail are refused before they can spend.
     const patrol = await patrolPOST(new Request(`${BASE}/v1/patrol`, { method: "POST", headers: { ...G(REAL_TX), ...W("w_eth_btc_join") } }));
     assert.equal(patrol.status, 409);
     assert.equal(patrol.headers.get("X-Harbinger-Forbidden"), "grant-reserved");
-    assert.equal((await sharedMemoryStore().get(REAL_TX))?.used, 0);
-    // Spend the unit another way (agentmail send shares the gate).
     const sent = await mailPOST(new Request(`${BASE}/v1/rails/agentmail`, { method: "POST", headers: { ...G(REAL_TX), "content-type": "application/json" }, body: JSON.stringify({ action: "send", watchId: "w_eth_btc_join" }) }));
-    assert.equal(sent.status, 200);
+    assert.equal(sent.status, 409);
+    assert.equal(sent.headers.get("X-Harbinger-Forbidden"), "grant-reserved");
+    assert.equal((await sharedMemoryStore().get(REAL_TX))?.used, 0);
+    assert.equal((await sharedMemoryStore().get(REAL_TX))?.reserved, 1);
+
+    // The hold drops on no-move. A direct spend is then allowed, and the grant is exhausted.
+    setNowForTests(Date.now() + 3 * 60 * 60 * 1000);
+    const released = (await (await stream({ ...G(REAL_TX), ...W("w_eth_btc_join") })).json()) as { status: string; grant: { used: number; reserved: number } };
+    assert.equal(released.status, "no-move");
+    assert.deepEqual([released.grant.used, released.grant.reserved], [0, 0]);
+    const spent = await mailPOST(new Request(`${BASE}/v1/rails/agentmail`, { method: "POST", headers: { ...G(REAL_TX), "content-type": "application/json" }, body: JSON.stringify({ action: "send", watchId: "w_eth_btc_join" }) }));
+    assert.equal(spent.status, 200);
+    assert.equal((await sharedMemoryStore().get(REAL_TX))?.used, 1);
     const exhausted = await hooks({ ...G(REAL_TX), ...W("w_eth_btc_join") });
     assert.equal(exhausted.status, 403);
     assert.equal(exhausted.headers.get("X-Harbinger-Forbidden"), "grant-exhausted");
@@ -157,7 +173,7 @@ describe("POST /v1/hooks", () => {
     assert.equal(other.headers.get("X-Harbinger-Forbidden"), "grant-bound-to-other-watch");
   });
   test("price check uses the requested watch", async () => {
-    const r = await hooks(G(MARKET_TX), { watchId: "w_btc_whale" });
+    const r = await hooks(G(MARKET_TX), { watchId: "w_eth_btc_join" });
     assert.equal(r.status, 403);
     assert.deepEqual(await r.json(), { forbidden: "insufficient-payment" });
   });
@@ -179,6 +195,40 @@ describe("POST /v1/hooks", () => {
   });
 });
 
+describe("w_btc_whale is not offered for paid ping", () => {
+  test("stream and hooks refuse it with 400 before any grant check; nothing is bound", async () => {
+    for (const headers of [W("w_btc_whale"), { ...G(REAL_TX), ...W("w_btc_whale") }, { "X-Harbinger-Grant": "hp1.demo", ...W("w_btc_whale") }]) {
+      const s = await stream(headers);
+      assert.equal(s.status, 400);
+      assert.equal(((await s.json()) as { error: string }).error, "watch-not-pingable");
+      const h = await hooks(headers, { callback: "https://example.com/h" });
+      assert.equal(h.status, 400);
+      assert.equal(((await h.json()) as { error: string }).error, "watch-not-pingable");
+    }
+    assert.equal(rpc.calls.length, 0);
+    assert.equal(await sharedMemoryStore().get(REAL_TX), null);
+    // The grant was never bound, so it still arms a pingable watch.
+    assert.equal((await stream({ ...G(REAL_TX), ...W("w_eth_btc_join") })).status, 200);
+  });
+  test("a monitor already pending on it still drains: the pump settles no-move and releases the hold", async () => {
+    const now = Date.now();
+    const tx = REAL_TX.toLowerCase();
+    sharedMemoryStore().redeemNow(tx, "w_btc_whale", now, false, { watchId: "w_btc_whale", quota: 1, used: 0, reserved: 0, boundAt: now, expiresAt: now + 3_600_000, paidAtomic: "1" });
+    const id = monitorId(tx, "w_btc_whale", 1);
+    const created = await sharedMemoryMonitor().create(
+      { id, version: 1, generation: 1, grantKey: tx, grantRaw: "x", watchId: "w_btc_whale", status: "pending", startedAt: now, deadlineAt: now + 8_000, baseline: null, samples: [], firedAt: null, correlation: null, correlationNote: null, receipt: null, ping: null, deliveryBody: null, consumed: false },
+      { reserve: true },
+    );
+    assert.ok(created.ok);
+    assert.equal((await sharedMemoryStore().get(tx))?.reserved, 1);
+    const report = await runPump(now + 9_000);
+    assert.equal(report.noMove, 1);
+    assert.equal((await sharedMemoryMonitor().get(id))?.status, "no-move");
+    const after = await sharedMemoryStore().get(tx);
+    assert.deepEqual([after?.used, after?.reserved], [0, 0]);
+  });
+});
+
 describe("patrol + agentmail send share the gate", () => {
   test("patrol unpaid 403; demo 403 on prod; patrol spends, replay 403", async () => {
     const p = (h: Record<string, string>) => patrolPOST(new Request(`${BASE}/v1/patrol`, { method: "POST", headers: h }));
@@ -194,11 +244,68 @@ describe("patrol + agentmail send share the gate", () => {
     assert.equal(armed.status, 200);
     const r = await p(G(REAL_TX));
     assert.equal(r.status, 409);
-    const body = (await r.json()) as { error: string; monitorId: string };
+    const body = (await r.json()) as { error: string; monitorId: string; deadlineAt: string; reserved: number; used: number; quota: number };
     assert.equal(body.error, "grant-reserved");
     assert.ok(body.monitorId);
+    assert.ok(body.deadlineAt);
+    assert.deepEqual([body.reserved, body.used, body.quota], [1, 0, 1]);
     assert.equal((await p({ ...G(REAL_TX), ...W("w_btc_10_1h") })).status, 409);
+    const mail = await mailPOST(new Request(`${BASE}/v1/rails/agentmail`, { method: "POST", headers: { ...G(REAL_TX), "content-type": "application/json" }, body: JSON.stringify({ action: "send", watchId: "w_btc_10_1h" }) }));
+    assert.equal(mail.status, 409);
+    const held = (await mail.json()) as { error: string; reserved: number; used: number; quota: number; monitorId: string };
+    assert.equal(held.error, "grant-reserved");
+    assert.deepEqual([held.reserved, held.used, held.quota], [1, 0, 1]);
+    assert.equal(held.monitorId, body.monitorId);
     assert.equal((await sharedMemoryStore().get(REAL_TX))?.used, 0);
+    assert.equal((await sharedMemoryStore().get(REAL_TX))?.reserved, 1);
+  });
+  test("overdue hold: past the deadline, patrol and agentmail settle the no-move and spend without a stream poll", async () => {
+    setQuotesForTests(async (symbols) =>
+      symbols.map((symbol) => ({ symbol, price: null, asOf: null, ok: false, stale: true, source: "yahoo-chart" as const, interval: "1m" as const })),
+    );
+    const p = (h: Record<string, string>) => patrolPOST(new Request(`${BASE}/v1/patrol`, { method: "POST", headers: h }));
+    assert.equal((await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") })).status, 200);
+    assert.equal((await p(G(REAL_TX))).status, 409);
+    assert.equal((await sharedMemoryStore().get(REAL_TX))?.reserved, 1);
+    // The window ends. No cron run and no stream poll: the next direct spend settles the hold itself.
+    setNowForTests(Date.now() + 3 * 60 * 60 * 1000);
+    assert.equal((await p(G(REAL_TX))).status, 200);
+    const after = await sharedMemoryStore().get(REAL_TX);
+    assert.deepEqual([after?.used, after?.reserved], [1, 0]);
+    const polled = (await (await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") })).json()) as { status: string };
+    assert.equal(polled.status, "no-move");
+    // Same path on agentmail, with a fresh grant.
+    const tx = synthTx(91);
+    rpc.restore();
+    rpc = mockRpc({ ...defaultReceipts(), [tx]: { status: "0x1", logs: [transferLog(220000)] } });
+    setNowForTests(null);
+    assert.equal((await stream({ ...G(tx), ...W("w_btc_10_1h") })).status, 200);
+    const send = () => mailPOST(new Request(`${BASE}/v1/rails/agentmail`, { method: "POST", headers: { ...G(tx), "content-type": "application/json" }, body: JSON.stringify({ action: "send", watchId: "w_btc_10_1h" }) }));
+    assert.equal((await send()).status, 409);
+    setNowForTests(Date.now() + 3 * 60 * 60 * 1000);
+    assert.equal((await send()).status, 200);
+    const mail = await sharedMemoryStore().get(tx);
+    assert.deepEqual([mail?.used, mail?.reserved], [1, 0]);
+  });
+  test("quota 2: one armed monitor plus one patrol, the next patrol is 409", async () => {
+    const tx = synthTx(88);
+    rpc.restore();
+    rpc = mockRpc({ ...defaultReceipts(), [tx]: { status: "0x1", logs: [transferLog(440000)] } });
+    const armed = await stream({ ...G(tx), ...W("w_btc_10_1h") });
+    assert.equal(armed.status, 200);
+    const body = (await armed.json()) as { grant: { used: number; reserved: number; quota: number } };
+    assert.deepEqual([body.grant.used, body.grant.reserved, body.grant.quota], [0, 1, 2]);
+    const p = (h: Record<string, string>) => patrolPOST(new Request(`${BASE}/v1/patrol`, { method: "POST", headers: h }));
+    assert.equal((await p(G(tx))).status, 200);
+    const mid = await sharedMemoryStore().get(tx);
+    assert.equal(mid?.used, 1);
+    assert.equal(mid?.reserved, 1);
+    const second = await p(G(tx));
+    assert.equal(second.status, 409);
+    assert.equal(second.headers.get("X-Harbinger-Forbidden"), "grant-reserved");
+    const denied = (await second.json()) as { error: string; reserved: number; used: number; quota: number };
+    assert.equal(denied.error, "grant-reserved");
+    assert.deepEqual([denied.reserved, denied.used, denied.quota], [1, 1, 2]);
   });
   test("agentmail send: missing watch 400, replay 403", async () => {
     const send = (body: Record<string, unknown>) =>

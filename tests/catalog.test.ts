@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { GET as cardsGET } from "../app/api/v1/catalog/cards/route";
 import { GET as watchesGET } from "../app/api/v1/watches/route";
-import { WATCHES, wellKnown } from "../lib/protocol";
+import { WATCHES, paidPingEligible, wellKnown } from "../lib/protocol";
 import { publicCard, CARD_DISCLAIMER } from "../lib/catalog";
 
 type Card = Record<string, unknown> & { watchId: string; deliveries: string[] };
@@ -37,6 +37,12 @@ test("each card has only the SoT v0 schema fields, price/triggers/disclaimer, no
     assert.equal(typeof c.priceUsdc, "number");
     assert.ok(Array.isArray(c.triggers) && (c.triggers as unknown[]).length > 0);
     assert.equal(c.disclaimer, CARD_DISCLAIMER);
+    if (c.watchId === "w_btc_whale") {
+      // Listed, not offered for paid ping: no subscribe or hook entry points.
+      assert.equal(c.subscribe, undefined);
+      assert.equal(c.webhook, undefined);
+      continue;
+    }
     assert.deepEqual(c.subscribe, { stream: "GET /v1/stream", headers: ["X-Harbinger-Watch", "X-Harbinger-Grant"] });
     if (c.deliveries.includes("webhook")) {
       assert.match(String((c.webhook as { outbound: string }).outbound), /^not-live/);
@@ -57,4 +63,14 @@ test("card for w_btc_10_1h matches the live watch", () => {
 
 test("well-known advertises the catalog", () => {
   assert.equal(wellKnown("https://www.x403-harbinger.com").catalog, "/v1/catalog/cards");
+});
+
+test("w_btc_whale stays in the book but is the one watch not offered for paid ping", async () => {
+  const listed = ((await (await watchesGET(new Request("https://x/v1/watches"))).json()) as { watches: { id: string; paidPing?: boolean }[] }).watches;
+  const whale = listed.find((w) => w.id === "w_btc_whale");
+  assert.ok(whale, "still listed");
+  assert.equal(whale.paidPing, false);
+  assert.deepEqual(WATCHES.filter((w) => !paidPingEligible(w)).map((w) => w.id), ["w_btc_whale"]);
+  const card = publicCard(WATCHES.find((w) => w.id === "w_btc_whale")!);
+  assert.match(card.description, /not offered for paid ping/);
 });
