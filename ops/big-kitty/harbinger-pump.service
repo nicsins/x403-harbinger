@@ -1,0 +1,13 @@
+[Unit]
+Description=Harbinger pump: advance pending monitors and deliver hooks (PR #8 preview)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# chmod 600, holds CRON_SECRET and HOOK_SIGNING_SECRET. Never commit it.
+EnvironmentFile=/mnt/nvme0-ai/ai-workspace/harbinger-pump/.env.local
+# Stable branch alias for kiln/real-move-ping. Swap to prod only with Nic's go.
+Environment=PUMP_URL=https://x403-harbinger-git-kiln-real-move-ping-nic-s-projects-33d61015.vercel.app/api/v1/pump
+ExecStart=/mnt/nvme0-ai/ai-workspace/harbinger-pump/pump.sh
+TimeoutStartSec=55

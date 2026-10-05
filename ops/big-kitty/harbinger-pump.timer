@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Harbinger pump every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=5s
+Persistent=false
+Unit=harbinger-pump.service
+
+[Install]
+WantedBy=timers.target

@@ -28,6 +28,21 @@ export async function POST(request: Request) {
     (typeof body.watchId === "string" ? body.watchId : null) ??
     request.headers.get(H.watch);
   const watch = findWatch(watchIdRaw);
+  // Watches whose card has no webhook rail never take a hook. Refuse before any
+  // grant check, so nothing is bound or consumed.
+  if (watch && !watch.deliveries.includes("webhook")) {
+    return new Response(
+      JSON.stringify({
+        protocol: PROTOCOL,
+        status: 400,
+        error: "hook-not-supported-for-watch",
+        meaning: "This watch has no webhook delivery. See deliveries on /v1/catalog/cards.",
+        watch: watch.id,
+        deliveries: watch.deliveries,
+      }),
+      { status: 400, headers: { "content-type": MEDIA, [H.version]: PROTOCOL, ...corsHeaders() } },
+    );
+  }
   const rawCallback = callbackRaw(body);
   const parsed = rawCallback == null ? null : validateCallbackUrl(rawCallback);
   const now = monitorNow();
