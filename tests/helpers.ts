@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { resetMonitorForTests } from "../lib/monitor";
 
 export const REAL_TX = "0xc3fd6b6fbfb0da9b9412225be0e1a0bad35dde6cfd3cc2bbe585c333e85d60ef"; // 0.22 USDC, w_btc_10_1h
 export const MARKET_TX = "0x72c0fb2f90b212492c4faf1253f6bced09fb6cd5e70ab7bc911948f4d9994a8d"; // 0.004 USDC marketplace settle
@@ -52,6 +53,8 @@ const ENV_KEYS = [
   "UPSTASH_REDIS_REST_URL",
   "UPSTASH_REDIS_REST_TOKEN",
   "BASE_RPC_URL",
+  "CRON_SECRET",
+  "HOOK_SIGNING_SECRET",
 ];
 export function withEnv(env: Record<string, string | undefined>) {
   const saved: Record<string, string | undefined> = {};
@@ -70,4 +73,5 @@ export function withEnv(env: Record<string, string | undefined>) {
 
 export function resetSharedStore() {
   (globalThis as { __harbingerGrantStore?: unknown }).__harbingerGrantStore = undefined;
+  resetMonitorForTests();
 }

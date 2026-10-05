@@ -168,7 +168,8 @@ export type GrantCheck =
   | { ok: false; status: 400 | 403 | 503; reason: GrantDenyReason; txHash?: string; binding?: GrantBinding };
 
 export type CheckGrantOpts = {
-  /** Count this request against the grant's quota (stream/patrol/agentmail). Hooks register = false. */
+  /** Count this request against quota. Stream polls and hook registration pass false.
+ *  A fired delivery, patrol, and agentmail send pass true. No-move never consumes. */
   consume: boolean;
   now?: number;
   /** Override for tests. Default: grantStoreFromEnv(). */
