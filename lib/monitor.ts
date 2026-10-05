@@ -11,13 +11,15 @@
  * webhook outbound not-live until a preview probe.
  */
 import { INSTRUMENTS, WATCH_BOOK } from "@/lib/agency";
-import { checkGrant } from "@/lib/grant";
+import { checkGrant, parseTxGrant } from "@/lib/grant";
 import { grantStoreFromEnv } from "@/lib/grant-store";
 import { postHook, signHookBody, type DeliveryResult } from "@/lib/hook";
 import { fetchQuotes, type Quote } from "@/lib/markets";
 import {
+  MAX_GENERATION,
   monitorId,
   monitorStoreFromEnv,
+  REARM_LIMIT,
   resetSharedMonitor,
   type ConsumeOutcome,
   type GrantSnap,
@@ -26,7 +28,10 @@ import {
 } from "@/lib/monitor-store";
 import {
   challengeResponse,
+  corsHeaders,
   findWatch,
+  H,
+  MEDIA,
   grantDeniedResponse,
   mintReceipt,
   PROTOCOL,
@@ -120,8 +125,18 @@ async function loadQuotes(legs: EvalLeg[], now: number): Promise<Map<string, Quo
   return map;
 }
 
-function blank(check: OkCheck, watch: Watch, grantRaw: string, now: number, generation: number, url?: string): Monitor {
+function blank(
+  check: OkCheck,
+  watch: Watch,
+  grantRaw: string,
+  now: number,
+  generation: number,
+  url?: string,
+): Monitor {
   const grantKey = grantKeyOf(check);
+  // A monitor never outlives its grant: end by min(window deadline, grant expiry).
+  const windowEnd = now + watch.windowMs;
+  const deadlineAt = check.kind === "tx" ? Math.min(windowEnd, check.binding.expiresAt) : windowEnd;
   return {
     id: monitorId(grantKey, watch.id, generation),
     version: 1,
@@ -131,7 +146,7 @@ function blank(check: OkCheck, watch: Watch, grantRaw: string, now: number, gene
     watchId: watch.id,
     status: "pending",
     startedAt: now,
-    deadlineAt: now + watch.windowMs,
+    deadlineAt,
     baseline: null,
     samples: [],
     firedAt: null,
@@ -305,7 +320,7 @@ export async function advanceMonitor(m: Monitor, watch: Watch, now: number, stor
 }
 
 export type PollBody = { http: 200; body: Record<string, unknown>; correlation: number | null; receipt: string | null };
-export type PollDenied = { http: 403 | 503; response: Response };
+export type PollDenied = { http: 403 | 409 | 503; response: Response };
 export type PollResult = PollBody | PollDenied;
 
 function denied(check: Extract<GrantCheck, { ok: false }>, watch: Watch): PollDenied {
@@ -357,7 +372,7 @@ export async function renderMonitor(m: Monitor, watch: Watch): Promise<PollResul
         deadlineAt: new Date(m.deadlineAt).toISOString(),
         credit: NO_MOVE_CREDIT,
         creditNote: CREDIT_NOTE,
-        rearm: "X-Harbinger-Rearm: 1",
+        ...rearmHint(m),
         meaning: "Window ended with no in-window threshold cross.",
         ...(grant ? { grant } : {}),
         ...(m.grantKey !== "demo" ? { settleTx: m.grantKey } : {}),
@@ -393,6 +408,53 @@ function quotaSpent(check: OkCheck): boolean {
   return check.kind === "tx" && check.binding.used >= check.binding.quota;
 }
 
+export { REARM_LIMIT };
+
+/** No-move bodies advertise a re-arm only while one is still allowed. */
+function rearmHint(m: Monitor): Record<string, unknown> {
+  if (m.grantKey === "demo") return { rearm: "X-Harbinger-Rearm: 1" };
+  const left = Math.max(0, MAX_GENERATION - m.generation);
+  return left > 0 ? { rearm: "X-Harbinger-Rearm: 1", rearmsLeft: left } : { rearmsLeft: 0 };
+}
+
+function conflict(watch: Watch, error: string, meaning: string, extra: Record<string, unknown> = {}): PollDenied {
+  return {
+    http: 409,
+    response: new Response(JSON.stringify({ protocol: PROTOCOL, status: 409, error, meaning, watch: watch.id, ...extra }), {
+      status: 409,
+      headers: { "content-type": MEDIA, [H.version]: PROTOCOL, [H.forbidden]: error, "cache-control": "no-store", ...corsHeaders() },
+    }),
+  };
+}
+
+function rearmLimit(watch: Watch, used: number): PollDenied {
+  return conflict(
+    watch,
+    "rearm-limit-reached",
+    `This grant has used all ${REARM_LIMIT} free re-arms after no-move. The last no-move result stands; nothing was spent.`,
+    { rearms: { used, limit: REARM_LIMIT } },
+  );
+}
+
+function rearmNotAllowed(watch: Watch, status: string): PollDenied {
+  return conflict(watch, "rearm-not-allowed", "Re-arm is only allowed after a no-move. A pending or fired monitor cannot be re-armed.", {
+    monitorStatus: status,
+  });
+}
+
+/**
+ * Patrol stopgap until full quota reservation: a pending, unexpired monitor for
+ * the same tx grant + watch holds the grant. Returns that monitor, or null.
+ */
+export async function pendingReservation(grantRaw: string | null | undefined, watchId: string, now: number): Promise<Monitor | null> {
+  const tx = grantRaw ? parseTxGrant(grantRaw) : null;
+  if (!tx) return null;
+  const store = monitorStoreFromEnv();
+  if (!store) return null;
+  const m = await store.find(tx, watchId);
+  return m && m.status === "pending" && m.deadlineAt > now ? m : null;
+}
+
 function storeUnavailable(check: OkCheck, watch: Watch): PollDenied {
   return denied(
     { ok: false, status: 503, reason: "grant-store-unavailable", ...(check.kind === "tx" ? { txHash: check.txHash } : {}) },
@@ -411,6 +473,9 @@ export async function pollStream(opts: { watch: Watch; check: OkCheck; grantRaw:
     return renderMonitor(next, opts.watch);
   }
   if (existing?.status === "no-move" && !opts.rearm) return renderMonitor(existing, opts.watch);
+  if (opts.rearm && (existing?.status === "pending" || existing?.status === "fired") && !quotaSpent(opts.check)) {
+    return rearmNotAllowed(opts.watch, existing.status);
+  }
   if (quotaSpent(opts.check)) {
     return denied(
       {
@@ -423,6 +488,13 @@ export async function pollStream(opts: { watch: Watch; check: OkCheck; grantRaw:
     );
   }
   if (existing?.status === "fired" && !opts.rearm) return renderMonitor(existing, opts.watch);
+
+  // Free re-arm after a no-move is capped per tx grant at generation <=
+  // MAX_GENERATION. The store's create() enforces the same rule atomically, so
+  // racing re-arms cannot exceed it. Shared demo stays uncapped.
+  if (existing?.status === "no-move" && opts.check.kind === "tx" && existing.generation >= MAX_GENERATION) {
+    return rearmLimit(opts.watch, existing.generation - 1);
+  }
 
   const generation = existing ? existing.generation + 1 : 1;
   const created = await store.create(blank(opts.check, opts.watch, opts.grantRaw, opts.now, generation));
