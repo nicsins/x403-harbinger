@@ -85,7 +85,7 @@ Publishers serve `/.well-known/harbinger` as `application/vnd.x403.harbinger+jso
 
 - Asset: USDC
 - Network: Base (`eip155:8453`)
-- payTo: `0xDa1Eab46918882f8656a41cF9fCa80e2415369d1`
+- payTo: `0xc22f9CAEBAc37fE72D5142f35f21f6696Ea9Ef69`
 
 ### Grant binding (PROPOSED policy, see `lib/grant.ts` `GRANT_POLICY`)
 
