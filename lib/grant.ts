@@ -1,4 +1,5 @@
 /** Base USDC grant verification for hp1.<txHash>, bound to one watch. */
+import { LEGACY_PAY_TO, TREASURY_ADDRESS, legacyMaxBlock } from "./treasury";
 import { grantStoreFromEnv, type GrantBinding, type GrantStore } from "./grant-store";
 
 export const USDC_BASE = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
@@ -7,7 +8,10 @@ export const TRANSFER_TOPIC0 =
 /** Floor for watch-less crawl grants only. Watch-bound grants must pay the watch's priceUsdc. */
 export const MIN_GRANT_USDC = 0.02;
 export const DEMO_GRANT = "hp1.demo";
-export const PAY_TO = "0xDa1Eab46918882f8656a41cF9fCa80e2415369d1";
+/** The only payTo ever advertised (env TREASURY_ADDRESS). */
+export const PAY_TO = TREASURY_ADDRESS;
+/** Legacy payTo: accepted ONLY when verifying already-settled receipts. Never advertised. */
+export { LEGACY_PAY_TO };
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -83,18 +87,39 @@ async function rpcCall(method: string, params: unknown[]): Promise<unknown> {
 }
 
 type RpcLog = { address?: string; topics?: string[]; data?: string };
-export type RpcReceipt = { status?: string; logs?: RpcLog[] };
+export type RpcReceipt = { status?: string; blockNumber?: string; logs?: RpcLog[] };
 
-/** Sum of USDC (atomic, 6dp) transferred to PAY_TO in a successful receipt. */
+/**
+ * Recipients credited for a settled receipt: the current treasury, plus LEGACY_PAY_TO
+ * (historical payments made before the switch). If LEGACY_PAY_TO_MAX_BLOCK is set,
+ * legacy credit only applies to txs mined at or before that block.
+ */
+function creditedRecipients(receipt: RpcReceipt): string[] {
+  const max = legacyMaxBlock();
+  if (max !== null) {
+    let bn: bigint | null = null;
+    try {
+      bn = receipt.blockNumber ? BigInt(receipt.blockNumber) : null;
+    } catch {
+      bn = null;
+    }
+    if (bn === null || bn > max) return [PAY_TO];
+  }
+  return [PAY_TO, ...LEGACY_PAY_TO];
+}
+
+/** Sum of USDC (atomic, 6dp) transferred to the treasury (or a legacy payTo, historical only) in a successful receipt. */
 export function usdcPaidInReceipt(receipt: RpcReceipt | null): bigint | null {
   if (!receipt || receipt.status !== "0x1" || !Array.isArray(receipt.logs)) return null;
+  const recipients = creditedRecipients(receipt);
   let paid = BigInt(0);
   for (const log of receipt.logs) {
     if (!log.address || !addrEq(log.address, USDC_BASE)) continue;
     const topics = log.topics ?? [];
     if (topics.length < 3) continue;
     if (!addrEq(topics[0]!, TRANSFER_TOPIC0)) continue;
-    if (!addrEq(topicAddress(topics[2]!), PAY_TO)) continue;
+    const to = topicAddress(topics[2]!);
+    if (!recipients.some((r) => addrEq(to, r))) continue;
     const data = (log.data ?? "0x0").replace(/^0x/i, "") || "0";
     try {
       paid += BigInt("0x" + data);

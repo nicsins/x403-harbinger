@@ -1,4 +1,5 @@
 import { WATCH_BOOK } from "@/lib/agency";
+import { TREASURY_ADDRESS } from "./treasury";
 
 import {
   isValidGrant as _isValidGrant,
@@ -33,7 +34,8 @@ export const DEMO_GRANT = "hp1.demo";
 export const ASSET = "USDC";
 export const NETWORK = "eip155:8453";
 export const NETWORK_NAME = "base";
-export const PAY_TO = "0xDa1Eab46918882f8656a41cF9fCa80e2415369d1";
+/** Only payTo ever advertised; env TREASURY_ADDRESS (default owner wallet). */
+export const PAY_TO = TREASURY_ADDRESS;
 
 export const H = {
   version: "X-Harbinger-Version",
