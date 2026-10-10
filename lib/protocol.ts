@@ -1,7 +1,7 @@
 import { WATCH_BOOK } from "@/lib/agency";
 import { TREASURY_ADDRESS } from "./treasury";
-import { PAID_NOTIFY_PAUSED_REASON, paidNotifyLive } from "./paid-notify";
-export { PAID_NOTIFY_PAUSED_REASON, paidNotifyLive };
+import { PAID_NOTIFY_PAUSED_REASON, paidAgentmailLive, paidHooksLive, paidStreamLive } from "./paid-notify";
+export { PAID_NOTIFY_PAUSED_REASON, paidAgentmailLive, paidHooksLive, paidStreamLive };
 
 import {
   isValidGrant as _isValidGrant,
@@ -51,6 +51,9 @@ export const H = {
   crawl: "X-Harbinger-Crawl",
   price: "X-Harbinger-Price",
   delivery: "X-Harbinger-Delivery",
+  monitor: "X-Harbinger-Monitor",
+  renew: "X-Harbinger-Renew",
+  signature: "X-Harbinger-Signature",
 } as const;
 
 export type DeliveryRail = "sse" | "webhook" | "agentmail";
@@ -214,10 +217,53 @@ export const SERVICES = [
   },
 ];
 
-/** Services safe to list publicly right now (paid-notify entries hidden while paused). */
+/** Services safe to list. Stream and AgentMail are listed only while that rail is live. */
 export function publicServices() {
-  if (paidNotifyLive()) return SERVICES;
-  return SERVICES.filter((x) => x.id !== "svc_harbinger" && x.id !== "svc_agentmail");
+  return SERVICES.filter((x) => {
+    if (x.id === "svc_harbinger") return paidStreamLive();
+    if (x.id === "svc_agentmail") return paidAgentmailLive();
+    return true;
+  });
+}
+
+export function notifyDiscovery() {
+  const stream = paidStreamLive();
+  const hooks = paidHooksLive();
+  const mail = paidAgentmailLive();
+  if (!stream && !hooks && !mail) {
+    return {
+      status: "paused" as const,
+      reason: PAID_NOTIFY_PAUSED_REASON,
+      note: "Paid notify is paused. Do not pay for it.",
+    };
+  }
+  return {
+    ...(stream
+      ? {
+          sse: "/v1/stream",
+          sseNote:
+            "Poll until a post-start threshold move fires one ping, or the window ends as no-move. no-move does not consume the grant. One-leg correlation is null.",
+        }
+      : { sse: { status: "paused" as const, reason: PAID_NOTIFY_PAUSED_REASON } }),
+    ...(hooks
+      ? {
+          webhook: "/v1/hooks",
+          webhookNote:
+            "Registration does not consume. The pump POSTs one signed body when the watch fires. Retries do not double-charge. no-move does not deliver.",
+        }
+      : { webhook: { status: "paused" as const, reason: PAID_NOTIFY_PAUSED_REASON } }),
+    agentmail: mail
+      ? {
+          rail: "agentmail",
+          webhook: "/v1/rails/agentmail",
+          note: "Durable copy for sleeping agents. Not the hot path. Not x402.",
+        }
+      : {
+          status: "paused" as const,
+          reason: PAID_NOTIFY_PAUSED_REASON,
+          note: "AgentMail send stays paused.",
+        },
+  };
 }
 
 export function watchById(id: string | null | undefined): Watch {
@@ -323,21 +369,7 @@ export function wellKnown(origin: string) {
     avatar: "/brand/harbinger-avatar.jpg",
     context: "/v1/context",
     catalog: "/v1/catalog/cards",
-    notify: paidNotifyLive()
-      ? {
-          sse: "/v1/stream",
-          webhook: "/v1/hooks",
-          agentmail: {
-            rail: "agentmail",
-            webhook: "/v1/rails/agentmail",
-            note: "Durable copy for sleeping agents. Not the hot path. Not x402.",
-          },
-        }
-      : {
-          status: "paused",
-          reason: PAID_NOTIFY_PAUSED_REASON,
-          note: "Paid notify is temporarily unavailable while the real-move trigger ships. Do not pay for it.",
-        },
+    notify: notifyDiscovery(),
     headers: H,
     grant: grantAdvert(H.grant),
     spec: `${origin}/spec`,
@@ -397,32 +429,20 @@ export function challengeResponse(
   });
 }
 
-export function settledPing(watch: Watch, txRef?: string | null) {
-  const matched = watch.conditions.map((c) => c.event);
-  const ping = {
-    protocol: PROTOCOL,
-    watchId: watch.id,
-    event: matched.join(watch.logic === "all" ? "+" : "|"),
-    correlation: 0.99,
-    advantageMs: watch.advantageMs,
-    priceUsdc: watch.priceUsdc,
-    receipt: mintReceipt(watch.id, txRef),
-    firedAt: new Date().toISOString(),
-    conditions: matched,
-    delivery: watch.deliveries,
-    ...(txRef ? { settleTx: txRef } : {}),
-  };
-  return ping;
-}
-
-/** 503 for paused paid-notify endpoints (see lib/paid-notify.ts). No payTo, price or grant advert. */
-export function paidNotifyPausedResponse(): Response {
+/** 503 for a paused paid-notify endpoint. No payTo, price, or grant advert. No grant is read. */
+export function paidNotifyPausedResponse(rail: "stream" | "hooks" | "agentmail" = "stream"): Response {
+  const meaning =
+    rail === "agentmail"
+      ? "AgentMail send stays paused. No grant is accepted or consumed here."
+      : rail === "hooks"
+        ? "Webhook registration is paused. No grant is accepted or consumed here."
+        : "The paid stream is paused. No grant is accepted or consumed here.";
   const body = {
     protocol: PROTOCOL,
     status: 503,
     error: PAID_NOTIFY_PAUSED_REASON,
-    meaning:
-      "Paid notify (stream, hooks, AgentMail send) is temporarily unavailable while the real-move trigger ships. Do not pay for it; no grant is accepted or consumed here.",
+    rail,
+    meaning,
     free: ["/v1/tape", "/v1/watches", "/v1/agency", "/v1/index", "/v1/catalog/cards", "/edge", "/desk"],
   };
   return new Response(JSON.stringify(body, null, 2), {

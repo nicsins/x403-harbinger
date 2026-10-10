@@ -6,8 +6,9 @@
  * price, triggers, disclaimer; no key; no PnL, hit-rates, scores or fire history.
  * The keyed tier (?key=, full + entitlement) is not built: API keys are a later cut.
  */
+import { watchBookById } from "./agency";
 import type { Watch } from "./protocol";
-import { paidNotifyLive } from "./paid-notify";
+import { paidHooksLive, paidStreamLive } from "./paid-notify";
 
 export const CARD_DISCLAIMER = "Informational notify. No PnL promise. Not investment advice.";
 
@@ -26,8 +27,14 @@ export type PublicCard = {
   disclaimer: string;
 };
 
+const WEBHOOK_OUTBOUND =
+  "signed POST from the notify pump when a post-start threshold move fires; retries do not double-charge; no-move does not deliver";
+
 export function publicCard(w: Watch): PublicCard {
   const joiner = w.logic === "all" ? " AND " : " OR ";
+  const priceGated = watchBookById(w.id) != null;
+  const subscribe = paidStreamLive() && priceGated;
+  const webhook = paidHooksLive() && priceGated && w.deliveries.includes("webhook");
   return {
     watchId: w.id,
     title: w.name,
@@ -36,18 +43,16 @@ export function publicCard(w: Watch): PublicCard {
     billing: w.billing,
     triggers: w.conditions.map((c) => c.event),
     deliveries: w.deliveries,
-    ...(!paidNotifyLive()
-      ? { status: "paused" as const }
-      : w.deliveries.includes("webhook")
+    ...(!subscribe && !webhook ? { status: "paused" as const } : {}),
+    ...(webhook
       ? {
           webhook: {
             register: "POST /v1/hooks",
-            // Honest: outbound fire to subscriber URLs is not proven yet (ship status gap #5).
-            outbound: "not-live: intake only; outbound delivery unproven",
+            outbound: WEBHOOK_OUTBOUND,
           },
         }
       : {}),
-    ...(paidNotifyLive()
+    ...(subscribe
       ? { subscribe: { stream: "GET /v1/stream", headers: ["X-Harbinger-Watch", "X-Harbinger-Grant"] } }
       : {}),
     disclaimer: CARD_DISCLAIMER,

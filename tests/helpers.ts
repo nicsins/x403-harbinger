@@ -52,6 +52,7 @@ const ENV_KEYS = [
   "UPSTASH_REDIS_REST_URL",
   "UPSTASH_REDIS_REST_TOKEN",
   "BASE_RPC_URL",
+  "CRON_SECRET",
 ];
 export function withEnv(env: Record<string, string | undefined>) {
   const saved: Record<string, string | undefined> = {};
@@ -69,5 +70,7 @@ export function withEnv(env: Record<string, string | undefined>) {
 }
 
 export function resetSharedStore() {
-  (globalThis as { __harbingerGrantStore?: unknown }).__harbingerGrantStore = undefined;
+  const g = globalThis as { __harbingerGrantStore?: unknown; __harbingerMonitorStore?: unknown };
+  g.__harbingerGrantStore = undefined;
+  g.__harbingerMonitorStore = undefined;
 }

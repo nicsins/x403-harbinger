@@ -1,21 +1,29 @@
 /**
- * Paid-notify kill switch (Oct 10 2026 hotfix).
+ * Per-endpoint paid-notify switches. Not env-controlled.
  *
- * The paid stream / hook / AgentMail-send deliveries used to emit an immediate
- * placeholder ping (hard-coded correlation 0.99, firedAt = request time) instead
- * of waiting for a real move. Until the real-move trigger ships, these paid
- * endpoints answer 503 `paid-notify-paused` BEFORE any grant check: no 403
- * payment challenge, no payTo/price advert, no grant redemption or consumption.
- *
- * Deliberately NOT env-controlled: only the real-move trigger code path may flip
- * `live` back to true (in code, reviewed in its own PR). Tests flip it locally to
- * keep exercising grant semantics.
+ * Stream and hooks are live because the real-move path in lib/notify-run.ts
+ * waits for a post-start threshold print, measures correlation, and consumes a
+ * grant unit only when that print fires. AgentMail `send` stays paused: this
+ * fix does not give it a real delivery. Tests may flip the fields on this
+ * object. There is no env var that turns a paused rail back on.
  */
 
-export const PAID_NOTIFY: { live: boolean } = { live: false };
+export const PAID_NOTIFY: { stream: boolean; hooks: boolean; agentmail: boolean } = {
+  stream: true,
+  hooks: true,
+  agentmail: false,
+};
 
 export const PAID_NOTIFY_PAUSED_REASON = "paid-notify-paused";
 
-export function paidNotifyLive(): boolean {
-  return PAID_NOTIFY.live === true;
+export function paidStreamLive(): boolean {
+  return PAID_NOTIFY.stream === true;
+}
+
+export function paidHooksLive(): boolean {
+  return PAID_NOTIFY.hooks === true;
+}
+
+export function paidAgentmailLive(): boolean {
+  return PAID_NOTIFY.agentmail === true;
 }
