@@ -1,5 +1,7 @@
 import { WATCH_BOOK } from "@/lib/agency";
 import { TREASURY_ADDRESS } from "./treasury";
+import { PAID_NOTIFY_PAUSED_REASON, paidNotifyLive } from "./paid-notify";
+export { PAID_NOTIFY_PAUSED_REASON, paidNotifyLive };
 
 import {
   isValidGrant as _isValidGrant,
@@ -212,6 +214,12 @@ export const SERVICES = [
   },
 ];
 
+/** Services safe to list publicly right now (paid-notify entries hidden while paused). */
+export function publicServices() {
+  if (paidNotifyLive()) return SERVICES;
+  return SERVICES.filter((x) => x.id !== "svc_harbinger" && x.id !== "svc_agentmail");
+}
+
 export function watchById(id: string | null | undefined): Watch {
   return WATCHES.find((w) => w.id === id) ?? WATCHES[0]!;
 }
@@ -315,15 +323,21 @@ export function wellKnown(origin: string) {
     avatar: "/brand/harbinger-avatar.jpg",
     context: "/v1/context",
     catalog: "/v1/catalog/cards",
-    notify: {
-      sse: "/v1/stream",
-      webhook: "/v1/hooks",
-      agentmail: {
-        rail: "agentmail",
-        webhook: "/v1/rails/agentmail",
-        note: "Durable copy for sleeping agents. Not the hot path. Not x402.",
-      },
-    },
+    notify: paidNotifyLive()
+      ? {
+          sse: "/v1/stream",
+          webhook: "/v1/hooks",
+          agentmail: {
+            rail: "agentmail",
+            webhook: "/v1/rails/agentmail",
+            note: "Durable copy for sleeping agents. Not the hot path. Not x402.",
+          },
+        }
+      : {
+          status: "paused",
+          reason: PAID_NOTIFY_PAUSED_REASON,
+          note: "Paid notify is temporarily unavailable while the real-move trigger ships. Do not pay for it.",
+        },
     headers: H,
     grant: grantAdvert(H.grant),
     spec: `${origin}/spec`,
@@ -399,4 +413,26 @@ export function settledPing(watch: Watch, txRef?: string | null) {
     ...(txRef ? { settleTx: txRef } : {}),
   };
   return ping;
+}
+
+/** 503 for paused paid-notify endpoints (see lib/paid-notify.ts). No payTo, price or grant advert. */
+export function paidNotifyPausedResponse(): Response {
+  const body = {
+    protocol: PROTOCOL,
+    status: 503,
+    error: PAID_NOTIFY_PAUSED_REASON,
+    meaning:
+      "Paid notify (stream, hooks, AgentMail send) is temporarily unavailable while the real-move trigger ships. Do not pay for it; no grant is accepted or consumed here.",
+    free: ["/v1/tape", "/v1/watches", "/v1/agency", "/v1/index", "/v1/catalog/cards", "/edge", "/desk"],
+  };
+  return new Response(JSON.stringify(body, null, 2), {
+    status: 503,
+    headers: {
+      "content-type": MEDIA,
+      ...corsHeaders(),
+      [H.version]: PROTOCOL,
+      "retry-after": "86400",
+      "cache-control": "no-store",
+    },
+  });
 }

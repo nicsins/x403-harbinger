@@ -7,6 +7,7 @@
  * The keyed tier (?key=, full + entitlement) is not built: API keys are a later cut.
  */
 import type { Watch } from "./protocol";
+import { paidNotifyLive } from "./paid-notify";
 
 export const CARD_DISCLAIMER = "Informational notify. No PnL promise. Not investment advice.";
 
@@ -19,7 +20,9 @@ export type PublicCard = {
   triggers: string[];
   deliveries: Watch["deliveries"];
   webhook?: { register: string; outbound: string };
-  subscribe: { stream: string; headers: string[] };
+  subscribe?: { stream: string; headers: string[] };
+  /** Present only while paid notify is paused (no subscribe/webhook advertised). */
+  status?: "paused";
   disclaimer: string;
 };
 
@@ -33,7 +36,9 @@ export function publicCard(w: Watch): PublicCard {
     billing: w.billing,
     triggers: w.conditions.map((c) => c.event),
     deliveries: w.deliveries,
-    ...(w.deliveries.includes("webhook")
+    ...(!paidNotifyLive()
+      ? { status: "paused" as const }
+      : w.deliveries.includes("webhook")
       ? {
           webhook: {
             register: "POST /v1/hooks",
@@ -42,7 +47,9 @@ export function publicCard(w: Watch): PublicCard {
           },
         }
       : {}),
-    subscribe: { stream: "GET /v1/stream", headers: ["X-Harbinger-Watch", "X-Harbinger-Grant"] },
+    ...(paidNotifyLive()
+      ? { subscribe: { stream: "GET /v1/stream", headers: ["X-Harbinger-Watch", "X-Harbinger-Grant"] } }
+      : {}),
     disclaimer: CARD_DISCLAIMER,
   };
 }

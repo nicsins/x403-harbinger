@@ -1,4 +1,4 @@
-import { H, MEDIA, PROTOCOL, corsHeaders, gateGrant, settledPing } from "@/lib/protocol";
+import { H, MEDIA, PROTOCOL, corsHeaders, paidNotifyLive, paidNotifyPausedResponse, gateGrant, settledPing } from "@/lib/protocol";
 
 export const dynamic = "force-dynamic";
 
@@ -7,6 +7,8 @@ export async function OPTIONS() {
 }
 
 export async function GET(request: Request) {
+  // Hotfix: placeholder ping pulled; 503 before any grant check (no challenge, no consume).
+  if (!paidNotifyLive()) return paidNotifyPausedResponse();
   const url = new URL(request.url);
   const watchIdRaw = request.headers.get(H.watch) ?? url.searchParams.get("watch");
   const gate = await gateGrant(request.headers.get(H.grant), watchIdRaw, { consume: true });

@@ -17,9 +17,12 @@ This is not x402. Discovery is public. The last print is free. Joins are grant-r
 Free pings on the desk: hottest coin on the hour, loudest G10 pair today, Tesla last print.
 SpaceX, xAI, and X are private — last-reported marks, not live quotes.
 
+## Paused
+
+Paid notify (stream, hooks, AgentMail send) is temporarily unavailable while the real-move trigger ships. Do not pay for it.
+
 ## Grant-required
 
-- Stream: GET /v1/stream  (403 until X-Harbinger-Grant: hp1.<payload>)
 - Patrol: POST /v1/patrol
 - Demo grant (reference only; rejected in production): hp1.demo
 - Production grant form: hp1.<BaseTxHash> (verified Base USDC Transfer to payTo)
