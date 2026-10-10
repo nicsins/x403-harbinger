@@ -72,8 +72,8 @@ Adjacent swarm-prediction work such as MiroFish is inspiration only. Harbinger s
 | `/v1/agency` | Persistent instrument + watch catalog |
 | `/v1/tape` | Free last prints — no grant |
 | `/v1/patrol` | Live sweep — 403 until grant |
-| `/v1/stream` | Notify desk — **paused (503 `paid-notify-paused`)** until the real-move trigger ships |
-| `/v1/hooks` | Webhook intake — **paused (503)** |
+| `/v1/stream` | Notify desk — poll until a real post-start move, or `no-move` |
+| `/v1/hooks` | Webhook registration. Delivery is the cron pump, only on fire |
 | `/v1/rails/agentmail` | Durable mail rail. Not the protocol. |
 | `/desk` | Human free tape, briefs, live news |
 | `/agency` | Human paid watch book |
@@ -96,8 +96,11 @@ Publishers serve `/.well-known/harbinger` as `application/vnd.x403.harbinger+jso
 - The tx is bound to the first watch it is redeemed on. Other watches get **403** `grant-bound-to-other-watch`.
 - per-ping: `floor(paid / price)` pings (max 10), expiring 24h after first use. session: 24h from first use, max 288 requests.
 - Spent or expired gets **403** `grant-exhausted` / `grant-expired`. Records are kept, so a tx can never be re-bound.
-- **Paused (Oct 10 2026):** stream, hooks and AgentMail send return 503 `paid-notify-paused` before any grant check (no challenge, nothing consumed). See `lib/paid-notify.ts`.
-- `POST /v1/hooks` registers a delivery and spends one ping. Exhausted or differently bound grants are refused. Stream, patrol and AgentMail send each spend one.
+- **Real-move ping:** `GET /v1/stream` and `POST /v1/hooks` bind the grant with `consume:false`, store a live Yahoo quote baseline, and wait. A leg counts only when a later quote (1-minute `regularMarketPrice` / `regularMarketTime`, not the patrol's 60-minute bars) crosses that leg's direction and threshold. `all` / `any` are the watch-book rules. `firedAt` is that quote's timestamp. Correlation is Pearson over aligned returns in the window (null below 8 returns; null for a one-leg watch). There is no hard-coded `0.99`.
+- **no-move (Nic, 10 Oct 2026):** if the window ends without a match, the response is `status: "no-move"`, `firedAt: null`, and the grant is not consumed. There is no refund transaction.
+- A grant unit is consumed only when a ping fires, once. Hook registration does not spend. Delivery retries do not spend again.
+- **AgentMail `send` stays paused** (503 `paid-notify-paused` before any grant check). Mail-sourced watches are not on this price trigger.
+- The hook pump is `GET /api/cron/notify-pump` (Vercel Cron, every minute). It is fail-closed until `CRON_SECRET` is set (`Authorization: Bearer`). Callbacks must be public https. A private or metadata target is refused.
 - Storage: Upstash Redis REST (`KV_REST_API_URL`/`KV_REST_API_TOKEN` or `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`).
   Dev and preview fall back to in-memory. Production with no store answers tx grants with **503** (fail closed)
   unless `GRANT_STORE=memory` is set on purpose (per-instance only, so replay is possible across instances).

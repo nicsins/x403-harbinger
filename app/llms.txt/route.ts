@@ -17,9 +17,11 @@ This is not x402. Discovery is public. The last print is free. Joins are grant-r
 Free pings on the desk: hottest coin on the hour, loudest G10 pair today, Tesla last print.
 SpaceX, xAI, and X are private — last-reported marks, not live quotes.
 
-## Paused
+## Notify
 
-Paid notify (stream, hooks, AgentMail send) is temporarily unavailable while the real-move trigger ships. Do not pay for it.
+- GET /v1/stream — paid. Polls until a post-start threshold move, then one ping. firedAt is the quote time. One-leg correlation is null. no-move does not consume the grant.
+- POST /v1/hooks — registration does not consume. A signed POST is delivered only when the watch fires. Retries do not double-charge. no-move does not deliver.
+- AgentMail send stays paused. Do not pay for it.
 
 ## Grant-required
 
