@@ -4,9 +4,11 @@ import { GET as cardsGET } from "../app/api/v1/catalog/cards/route";
 import { GET as watchesGET } from "../app/api/v1/watches/route";
 import { WATCHES, wellKnown } from "../lib/protocol";
 import { publicCard, CARD_DISCLAIMER } from "../lib/catalog";
+import { PAID_NOTIFY } from "../lib/paid-notify";
+import { GET as indexGET } from "../app/api/v1/index/route";
 
 type Card = Record<string, unknown> & { watchId: string; deliveries: string[] };
-const ALLOWED = ["watchId", "title", "description", "priceUsdc", "billing", "triggers", "deliveries", "webhook", "subscribe", "disclaimer"];
+const ALLOWED = ["watchId", "title", "description", "priceUsdc", "billing", "triggers", "deliveries", "webhook", "subscribe", "status", "disclaimer"];
 const FORBIDDEN = /pnl|hit|score|correlation|fired|advantage|thesis|legs|receipt|grant\b|secret|key/i;
 
 test("GET /v1/catalog/cards -> 200 public JSON, no grant or key", async () => {
@@ -37,13 +39,41 @@ test("each card has only the SoT v0 schema fields, price/triggers/disclaimer, no
     assert.equal(typeof c.priceUsdc, "number");
     assert.ok(Array.isArray(c.triggers) && (c.triggers as unknown[]).length > 0);
     assert.equal(c.disclaimer, CARD_DISCLAIMER);
-    assert.deepEqual(c.subscribe, { stream: "GET /v1/stream", headers: ["X-Harbinger-Watch", "X-Harbinger-Grant"] });
-    if (c.deliveries.includes("webhook")) {
-      assert.match(String((c.webhook as { outbound: string }).outbound), /^not-live/);
-    } else {
-      assert.equal(c.webhook, undefined);
-    }
+    // Hotfix default: paid notify paused -> no subscribe/webhook advertised.
+    assert.equal(c.status, "paused");
+    assert.equal(c.subscribe, undefined);
+    assert.equal(c.webhook, undefined);
   }
+});
+
+test("when paid notify is re-enabled, cards advertise subscribe/webhook as before", () => {
+  PAID_NOTIFY.live = true;
+  try {
+    for (const w of WATCHES) {
+      const c = publicCard(w) as unknown as Card;
+      assert.equal(c.status, undefined);
+      assert.deepEqual(c.subscribe, { stream: "GET /v1/stream", headers: ["X-Harbinger-Watch", "X-Harbinger-Grant"] });
+      if (c.deliveries.includes("webhook")) {
+        assert.match(String((c.webhook as { outbound: string }).outbound), /^not-live/);
+      } else {
+        assert.equal(c.webhook, undefined);
+      }
+    }
+  } finally {
+    PAID_NOTIFY.live = false;
+  }
+});
+
+test("paused: well-known, index and llms do not advertise paid notify", async () => {
+  const wk = wellKnown("https://www.x403-harbinger.com") as unknown as { notify: Record<string, unknown> };
+  assert.equal(wk.notify.status, "paused");
+  assert.equal(wk.notify.sse, undefined);
+  const idx = await indexGET(new Request("https://x/v1/index", { headers: { "X-Harbinger-Crawl": "1" } }));
+  assert.equal(idx.status, 200);
+  const paths = ((await idx.json()) as { services: { path: string }[] }).services.map((x) => x.path);
+  assert.ok(!paths.includes("/v1/stream") && !paths.includes("/v1/rails/agentmail"));
+  const { GET: llmsGET } = await import("../app/llms.txt/route");
+  assert.doesNotMatch(await llmsGET().text(), /GET \/v1\/stream/);
 });
 
 test("card for w_btc_10_1h matches the live watch", () => {

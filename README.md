@@ -72,8 +72,8 @@ Adjacent swarm-prediction work such as MiroFish is inspiration only. Harbinger s
 | `/v1/agency` | Persistent instrument + watch catalog |
 | `/v1/tape` | Free last prints — no grant |
 | `/v1/patrol` | Live sweep — 403 until grant |
-| `/v1/stream` | Notify desk — 403 until grant |
-| `/v1/hooks` | Webhook intake |
+| `/v1/stream` | Notify desk — **paused (503 `paid-notify-paused`)** until the real-move trigger ships |
+| `/v1/hooks` | Webhook intake — **paused (503)** |
 | `/v1/rails/agentmail` | Durable mail rail. Not the protocol. |
 | `/desk` | Human free tape, briefs, live news |
 | `/agency` | Human paid watch book |
@@ -96,6 +96,7 @@ Publishers serve `/.well-known/harbinger` as `application/vnd.x403.harbinger+jso
 - The tx is bound to the first watch it is redeemed on. Other watches get **403** `grant-bound-to-other-watch`.
 - per-ping: `floor(paid / price)` pings (max 10), expiring 24h after first use. session: 24h from first use, max 288 requests.
 - Spent or expired gets **403** `grant-exhausted` / `grant-expired`. Records are kept, so a tx can never be re-bound.
+- **Paused (Oct 10 2026):** stream, hooks and AgentMail send return 503 `paid-notify-paused` before any grant check (no challenge, nothing consumed). See `lib/paid-notify.ts`.
 - `POST /v1/hooks` registers a delivery and spends one ping. Exhausted or differently bound grants are refused. Stream, patrol and AgentMail send each spend one.
 - Storage: Upstash Redis REST (`KV_REST_API_URL`/`KV_REST_API_TOKEN` or `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN`).
   Dev and preview fall back to in-memory. Production with no store answers tx grants with **503** (fail closed)

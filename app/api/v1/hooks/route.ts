@@ -1,4 +1,4 @@
-import { H, MEDIA, PROTOCOL, corsHeaders, findWatch, grantDeniedResponse, watchById } from "@/lib/protocol";
+import { H, MEDIA, PROTOCOL, corsHeaders, paidNotifyLive, paidNotifyPausedResponse, findWatch, grantDeniedResponse, watchById } from "@/lib/protocol";
 import { checkGrant } from "@/lib/grant";
 
 export async function OPTIONS() {
@@ -6,6 +6,8 @@ export async function OPTIONS() {
 }
 
 export async function POST(request: Request) {
+  // Hotfix: placeholder ping pulled; 503 before any grant check (no challenge, no consume).
+  if (!paidNotifyLive()) return paidNotifyPausedResponse();
   let body: Record<string, unknown> = {};
   try {
     body = (await request.json()) as Record<string, unknown>;

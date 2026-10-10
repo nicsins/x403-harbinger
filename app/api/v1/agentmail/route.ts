@@ -1,4 +1,4 @@
-import { H, MEDIA, PROTOCOL, corsHeaders, findWatch, grantDeniedResponse, mintReceipt, watchById } from "@/lib/protocol";
+import { H, MEDIA, PROTOCOL, corsHeaders, paidNotifyLive, paidNotifyPausedResponse, findWatch, grantDeniedResponse, mintReceipt, watchById } from "@/lib/protocol";
 import { checkGrant } from "@/lib/grant";
 
 export async function OPTIONS() {
@@ -33,6 +33,8 @@ export async function POST(request: Request) {
     });
   }
   if (action === "send") {
+    // Hotfix: paid placeholder delivery pulled with stream/hooks.
+    if (!paidNotifyLive()) return paidNotifyPausedResponse();
     const watchIdRaw = typeof body.watchId === "string" ? body.watchId : null;
     const found = findWatch(watchIdRaw);
     const check = await checkGrant(grant, watchIdRaw, found, { consume: true });

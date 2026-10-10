@@ -25,6 +25,10 @@ export default function SpecPage() {
         <p className="muted">Harbinger binds to HTTP 403. 401 is authentication. 402 is payment-for-a-resource. Implementations MUST NOT speak HTTP 402 on Harbinger endpoints.</p>
       </article>
       <article className="panel">
+        <h2>Status: paid notify paused</h2>
+        <p className="muted">The live stream, hooks and AgentMail send endpoints are temporarily unavailable (503 paid-notify-paused) while the real-move trigger ships. Do not pay for them. The handshake below is the protocol reference, not a live offer.</p>
+      </article>
+      <article className="panel">
         <h2>4–5. Grants and handshake</h2>
         <p className="muted">A grant is a bearer token of the form <span className="mono">{GRANT_FORM}</span>. Demo grant <span className="mono">hp1.demo</span>.</p>
         <ol className="list">

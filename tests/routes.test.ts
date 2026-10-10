@@ -4,6 +4,7 @@ import { GET as streamGET } from "../app/api/v1/stream/route";
 import { POST as hooksPOST } from "../app/api/v1/hooks/route";
 import { POST as patrolPOST } from "../app/api/v1/patrol/route";
 import { POST as mailPOST } from "../app/api/v1/agentmail/route";
+import { PAID_NOTIFY } from "../lib/paid-notify";
 import { REAL_TX, MARKET_TX, FAKE_TX, mockRpc, defaultReceipts, withEnv, resetSharedStore } from "./helpers";
 
 const BASE = "https://www.x403-harbinger.com";
@@ -22,8 +23,11 @@ beforeEach(() => {
   restoreEnv = withEnv({ VERCEL_ENV: "production", GRANT_STORE: "memory" });
   resetSharedStore();
   rpc = mockRpc(defaultReceipts());
+  // Grant-semantics tests run with paid notify switched on; the paused hotfix is tested below.
+  PAID_NOTIFY.live = true;
 });
 afterEach(() => {
+  PAID_NOTIFY.live = false;
   rpc.restore();
   restoreEnv();
   resetSharedStore();
@@ -147,5 +151,29 @@ describe("patrol + agentmail send share the gate", () => {
     assert.equal((await send({})).status, 400);
     assert.equal((await send({ watchId: "w_btc_10_1h" })).status, 200);
     assert.equal((await send({ watchId: "w_btc_10_1h" })).status, 403);
+  });
+});
+
+describe("hotfix: paid notify paused (default)", () => {
+  beforeEach(() => {
+    PAID_NOTIFY.live = false;
+  });
+  test("stream, hooks and agentmail send -> 503 paid-notify-paused, no challenge, no payTo", async () => {
+    const send = mailPOST(new Request(`${BASE}/v1/rails/agentmail`, { method: "POST", headers: { ...G(REAL_TX), "content-type": "application/json" }, body: JSON.stringify({ action: "send", watchId: "w_btc_10_1h" }) }));
+    for (const r of [await stream(W("w_btc_10_1h")), await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") }), await hooks({ ...G(REAL_TX), ...W("w_btc_10_1h") }), await send]) {
+      assert.equal(r.status, 503);
+      assert.equal(r.headers.get("X-Harbinger-Forbidden"), null);
+      assert.equal(r.headers.get("X-Harbinger-Price"), null);
+      const text = await r.text();
+      assert.match(text, /paid-notify-paused/);
+      assert.doesNotMatch(text, /payTo|0\.99|receipt/);
+    }
+  });
+  test("paused endpoints never redeem: the grant still works once re-enabled", async () => {
+    assert.equal((await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") })).status, 503);
+    assert.equal((await hooks({ ...G(REAL_TX), ...W("w_btc_10_1h") })).status, 503);
+    assert.equal(rpc.calls.length, 0);
+    PAID_NOTIFY.live = true;
+    assert.equal((await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") })).status, 200);
   });
 });
