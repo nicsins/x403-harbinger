@@ -115,25 +115,32 @@ redis.call('SET', KEYS[1], cjson.encode(b))
 return cjson.encode({ok=true, binding=b})
 `;
 
+export const GRANT_KEY_PREFIX = "harbinger:grant:";
+
+/** Upstash Redis REST command. Shared by the grant store and the monitor store. */
+export async function upstashRest(url: string, token: string, args: (string | number)[]): Promise<unknown> {
+  const res = await fetch(url.replace(/\/$/, ""), {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify(args.map(String)),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`grant store HTTP ${res.status}`);
+  const json = (await res.json()) as { result?: unknown; error?: string };
+  if (json.error) throw new Error(`grant store error: ${json.error}`);
+  return json.result ?? null;
+}
+
 export class UpstashGrantStore implements GrantStore {
   readonly kind = "upstash" as const;
   constructor(
     private readonly url: string,
     private readonly token: string,
-    private readonly prefix = "harbinger:grant:",
+    private readonly prefix = GRANT_KEY_PREFIX,
   ) {}
 
   private async cmd(args: (string | number)[]): Promise<unknown> {
-    const res = await fetch(this.url.replace(/\/$/, ""), {
-      method: "POST",
-      headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json" },
-      body: JSON.stringify(args.map(String)),
-      cache: "no-store",
-    });
-    if (!res.ok) throw new Error(`grant store HTTP ${res.status}`);
-    const json = (await res.json()) as { result?: unknown; error?: string };
-    if (json.error) throw new Error(`grant store error: ${json.error}`);
-    return json.result ?? null;
+    return upstashRest(this.url, this.token, args);
   }
 
   private normalize(b: GrantBinding): GrantBinding {

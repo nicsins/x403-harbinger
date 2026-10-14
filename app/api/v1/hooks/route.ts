@@ -1,36 +1,16 @@
-import { H, MEDIA, PROTOCOL, corsHeaders, paidNotifyLive, paidNotifyPausedResponse, findWatch, grantDeniedResponse, watchById } from "@/lib/protocol";
-import { checkGrant } from "@/lib/grant";
+import { corsHeaders } from "@/lib/protocol";
+import { handleHookGet, handleHookPost } from "@/lib/notify-run";
+
+export const dynamic = "force-dynamic";
 
 export async function OPTIONS() {
   return new Response(null, { status: 204, headers: corsHeaders() });
 }
 
-export async function POST(request: Request) {
-  // Hotfix: placeholder ping pulled; 503 before any grant check (no challenge, no consume).
-  if (!paidNotifyLive()) return paidNotifyPausedResponse();
-  let body: Record<string, unknown> = {};
-  try {
-    body = (await request.json()) as Record<string, unknown>;
-  } catch {
-    body = {};
-  }
-  const watchIdRaw =
-    (typeof body.watchId === "string" ? body.watchId : null) ??
-    request.headers.get(H.watch);
-  const watch = findWatch(watchIdRaw);
+export async function GET(request: Request) {
+  return handleHookGet(request);
+}
 
-  // Hook registration is the metered delivery event: consume one quota unit,
-  // exactly like stream. This prevents exhausted grants from re-registering.
-  const check = await checkGrant(request.headers.get(H.grant), watchIdRaw, watch, { consume: true });
-  if (!check.ok) {
-    if (check.status !== 403) return grantDeniedResponse(check, watch ?? watchById(null), watchIdRaw);
-    return new Response(JSON.stringify({ forbidden: check.reason }), {
-      status: 403,
-      headers: { "content-type": MEDIA, [H.forbidden]: check.reason, [H.version]: PROTOCOL, ...corsHeaders() },
-    });
-  }
-  return Response.json(
-    { protocol: PROTOCOL, accepted: true, watchId: watch!.id },
-    { headers: corsHeaders() },
-  );
+export async function POST(request: Request) {
+  return handleHookPost(request);
 }

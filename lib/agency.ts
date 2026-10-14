@@ -324,6 +324,10 @@ export const WATCH_BOOK: WatchDef[] = [
   },
 ];
 
+export function watchBookById(id: string): WatchDef | null {
+  return WATCH_BOOK.find((w) => w.id === id) ?? null;
+}
+
 export function pctChange(from: number, to: number) {
   if (!from || !Number.isFinite(from) || !Number.isFinite(to)) return 0;
   return ((to - from) / from) * 100;

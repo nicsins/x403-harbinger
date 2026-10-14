@@ -56,7 +56,7 @@ A mailbox API key is not a grant.
 1. Subscriber GET /v1/stream with X-Harbinger-Watch.
 2. Edge answers 403 with X-Harbinger-Forbidden: grant-required, plus price, event, and advantage window.
 3. Subscriber retries with X-Harbinger-Grant.
-4. Edge answers 200 with X-Harbinger-Receipt: settled and opens the stream.
+4. Edge answers 202 with a pending monitor. It does not open a long-lived socket for the watch window. Poll with the same grant until the watch fires (200, one receipt) or the window ends as `no-move` (`firedAt` null, grant not consumed).
 
 ## 6. Headers
 
@@ -82,11 +82,11 @@ Listed endpoints appear at GET /v1/index. Watches appear at GET /v1/watches. The
 
 ## 8. Notify
 
-After a grant, GET /v1/stream with Accept: text/event-stream yields SSE. Accept: application/json yields a single correlate object. Webhooks POST the same object to a subscriber URL.
+After a grant, GET /v1/stream returns a pending monitor. Accept: text/event-stream yields one SSE event (`pending`, `ping`, or `no-move`) and closes. Accept: application/json is the same object. Poll until it fires. Webhooks POST that fired object once, signed, when a scheduled pump observes the move. `no-move` does not POST.
 
 ## 9. Correlation
 
-A watch is logic `all` or `any` over N conditions inside a window. When it fires the edge MUST include X-Harbinger-Correlation (0–1) and X-Harbinger-Advantage-Window (milliseconds). The fee is for the join, not for a single print.
+A watch is logic `all` or `any` over N conditions inside a window. When it fires the edge MUST include X-Harbinger-Correlation: the Pearson correlation of aligned leg returns over the watch, or `n/a` when the watch has one leg or fewer than 8 returns. It MUST NOT be a placeholder constant. The edge also sends X-Harbinger-Advantage-Window (milliseconds). `firedAt` is the observed quote time, not the request time. The fee is for the join, not for a single print, and it is taken only when the watch fires.
 
 Finance watches in 1.0 are percent-move legs over 1h / 4h / 1d on named instruments (crypto, G10 FX, equities). A canonical example is bitcoin ±10% in one hour. Pairwise rolling Pearson on the same bars MAY be published as context. Those scores are estimates. They MUST NOT be presented as investment advice.
 
