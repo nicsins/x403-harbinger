@@ -56,7 +56,7 @@ route: <request path without /api, e.g. /v1/stream>
 ts: <unixSeconds>
 ```
 
-The server MUST recover the signer and require it to equal the `from` of the Base tx; MUST reject timestamps more than 300 s old or ahead (`grant-stale`); MUST accept each signed header once (`grant-replayed`). The tx binds to its first watch and is billed per ping.
+The signer MUST be the payer: the `from` of a USDC Transfer to payTo in that tx whose amount (summed per payer) meets the watch price. This is not the tx `from`, which is a bundler for smart wallets. The server MUST verify the signature for that address as an EOA, ERC-1271 or ERC-6492 (counterfactual) signature; MUST reject timestamps more than 300 s old or ahead (`grant-stale`); MUST accept each signed header once (`grant-replayed`). The tx binds to its first watch and is billed per ping.
 
 ### Deprecated: X403-HP-1
 

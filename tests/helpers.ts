@@ -14,8 +14,12 @@ export function fixture(tx: string): unknown {
   return JSON.parse(readFileSync(join(__dirname, "fixtures", `receipt-${tx.slice(2)}.json`), "utf8"));
 }
 
-export function transferLog(atomic: number, toTopic = PAY_TO_TOPIC, address = USDC) {
-  return { address, topics: [TOPIC0, PAYER_TOPIC, toTopic], data: "0x" + atomic.toString(16).padStart(64, "0") };
+export function addrTopic(addr: string): string {
+  return "0x" + addr.replace(/^0x/i, "").toLowerCase().padStart(64, "0");
+}
+
+export function transferLog(atomic: number, toTopic = PAY_TO_TOPIC, address = USDC, fromTopic = PAYER_TOPIC) {
+  return { address, topics: [TOPIC0, fromTopic, toTopic], data: "0x" + atomic.toString(16).padStart(64, "0") };
 }
 
 export function synthTx(n: number): string {
@@ -23,12 +27,23 @@ export function synthTx(n: number): string {
 }
 
 /** Mock global fetch as a Base JSON-RPC endpoint serving canned receipts. */
-export function mockRpc(receipts: Record<string, unknown>) {
+export function mockRpc(
+  receipts: Record<string, unknown>,
+  other?: (method: string, params: unknown[]) => unknown,
+) {
   const calls: string[] = [];
   const original = globalThis.fetch;
   globalThis.fetch = (async (_url: unknown, init?: { body?: unknown }) => {
-    const req = JSON.parse(String(init?.body ?? "{}")) as { method: string; params: string[] };
-    if (req.method !== "eth_getTransactionReceipt") throw new Error("unexpected rpc " + req.method);
+    const parsed = JSON.parse(String(init?.body ?? "{}"));
+    if (Array.isArray(parsed)) throw new Error("unexpected rpc batch");
+    const req = parsed as { id?: number; method: string; params: string[] };
+    if (req.method !== "eth_getTransactionReceipt") {
+      if (!other) throw new Error("unexpected rpc " + req.method);
+      const result = other(req.method, req.params);
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: req.id ?? 1, result }), {
+        headers: { "content-type": "application/json" },
+      });
+    }
     const tx = String(req.params[0]).toLowerCase();
     calls.push(tx);
     const result = receipts[tx] ?? null;
