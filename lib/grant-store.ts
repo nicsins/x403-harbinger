@@ -49,6 +49,8 @@ export interface GrantStore {
     consume: boolean,
     proposal?: GrantBinding,
   ): Promise<RedeemResult>;
+  /** Set-if-absent with TTL. true = first claim (fresh), false = already seen (replay). */
+  claimNonce(key: string, ttlMs: number): Promise<boolean>;
 }
 
 /** Pure check shared by the memory store and tests (mirrors the Lua script). */
@@ -83,6 +85,16 @@ export class MemoryGrantStore implements GrantStore {
     if (next) this.map.set(key, next);
     return result;
   }
+
+  private readonly nonces = new Map<string, number>();
+  async claimNonce(key: string, ttlMs: number, now = Date.now()): Promise<boolean> {
+    const k = key.toLowerCase();
+    const exp = this.nonces.get(k);
+    if (exp !== undefined && exp > now) return false;
+    this.nonces.set(k, now + ttlMs);
+    if (this.nonces.size > 10000) for (const [nk, e] of this.nonces) if (e <= now) this.nonces.delete(nk);
+    return true;
+  }
 }
 
 const REDEEM_LUA = `
@@ -116,6 +128,7 @@ return cjson.encode({ok=true, binding=b})
 `;
 
 export const GRANT_KEY_PREFIX = "harbinger:grant:";
+export const NONCE_KEY_PREFIX = "harbinger:hp2nonce:";
 
 /** Upstash Redis REST command. Shared by the grant store and the monitor store. */
 export async function upstashRest(url: string, token: string, args: (string | number)[]): Promise<unknown> {
@@ -152,6 +165,11 @@ export class UpstashGrantStore implements GrantStore {
       expiresAt: Number(b.expiresAt),
       paidAtomic: String(b.paidAtomic),
     };
+  }
+
+  async claimNonce(key: string, ttlMs: number): Promise<boolean> {
+    const r = await this.cmd(["SET", NONCE_KEY_PREFIX + key.toLowerCase(), "1", "NX", "PX", Math.max(1, Math.round(ttlMs))]);
+    return r === "OK";
   }
 
   async get(txHash: string): Promise<GrantBinding | null> {

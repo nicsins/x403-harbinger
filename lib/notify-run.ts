@@ -412,7 +412,7 @@ export async function handleStream(request: Request): Promise<Response> {
     const named = findWatch(watchIdRaw);
     if (named && !watchBookById(named.id)) return notPriceWatch();
   }
-  const gate = await gateGrant(grantRaw, watchIdRaw, { consume: false });
+  const gate = await gateGrant(grantRaw, watchIdRaw, { consume: false, route: new URL(request.url).pathname });
   if (!gate.ok) return gate.response;
   const book = watchBookById(gate.watch.id);
   if (!book) return notPriceWatch();
@@ -461,7 +461,7 @@ export async function handleHookPost(request: Request): Promise<Response> {
     const named = findWatch(watchIdRaw);
     if (named && !watchBookById(named.id)) return notPriceWatch();
   }
-  const gate = await gateGrant(grantRaw, watchIdRaw, { consume: false });
+  const gate = await gateGrant(grantRaw, watchIdRaw, { consume: false, route: new URL(request.url).pathname });
   if (!gate.ok) return asHookDenial(gate.response);
   const callback = validateCallbackUrl(body.callbackUrl);
   if (!callback.ok) {
@@ -525,7 +525,7 @@ export async function handleHookGet(request: Request): Promise<Response> {
     const named = findWatch(watchIdRaw);
     if (named && !watchBookById(named.id)) return notPriceWatch();
   }
-  const gate = await gateGrant(grantRaw, watchIdRaw, { consume: false });
+  const gate = await gateGrant(grantRaw, watchIdRaw, { consume: false, route: new URL(request.url).pathname });
   if (!gate.ok) return asHookDenial(gate.response);
   const book = watchBookById(gate.watch.id);
   if (!book) return notPriceWatch();
@@ -665,7 +665,7 @@ export async function handlePump(request: Request): Promise<Response> {
 async function liveTxCheck(m: Monitor): Promise<OkCheck | null> {
   const watch = findWatch(m.watchId);
   if (!watch) return null;
-  const check = await checkGrant(`hp1.${m.grantKey}`, m.watchId, watch, { consume: false, now: nowMs() });
+  const check = await checkGrant(`hp1.${m.grantKey}`, m.watchId, watch, { consume: false, now: nowMs(), internal: true });
   if (!check.ok || check.kind !== "tx") return null;
   return check;
 }

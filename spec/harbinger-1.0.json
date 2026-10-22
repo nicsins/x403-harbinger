@@ -2,7 +2,7 @@
   "protocol": "x403-HARBINGER/1.0",
   "name": "Harbinger",
   "designation": "x403-HARBINGER",
-  "document": "X403-HP-1",
+  "document": "X403-HP-2",
   "urn": "urn:x403:harbinger:1.0",
   "status": 403,
   "meaning": "Forbidden until grant",
@@ -25,5 +25,5 @@
     "lead": "X-Harbinger-Advantage-Window",
     "crawl": "X-Harbinger-Crawl"
   },
-  "grant": { "scheme": "hp1", "demo": "hp1.demo" }
+  "grant": { "scheme": "hp2", "form": "hp2.<BaseTxHash>.<unixSeconds>.<eip191Signature>", "deprecated": { "scheme": "hp1", "acceptedUntil": "2026-11-04T00:00:00Z" }, "demo": "hp1.demo" }
 }

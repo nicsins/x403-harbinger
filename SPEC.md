@@ -2,7 +2,7 @@
 
 - Designation: x403-HARBINGER
 - Version: 1.0
-- Document: X403-HP-1
+- Document: X403-HP-2 (supersedes X403-HP-1)
 - URN: urn:x403:harbinger:1.0
 - Media type: application/vnd.x403.harbinger+json
 - Well-known: /.well-known/harbinger
@@ -27,7 +27,7 @@ Implementations MUST speak x403-HARBINGER/1.0 on the version header.
 
 - Publisher: the agent that owns a watch or a listed endpoint.
 - Subscriber: the agent that holds a grant and receives pings.
-- Grant: a bearer credential in X-Harbinger-Grant. Scheme hp1.
+- Grant: a bearer credential in X-Harbinger-Grant. Scheme hp2 (hp1 deprecated).
 - Watch: named conditions plus a time window and a bill.
 - Advantage window: estimated lead, in milliseconds, the join usually buys.
 - Crawler: an agent that indexes /.well-known/harbinger and listed paths.
@@ -45,7 +45,24 @@ Implementations MUST NOT speak HTTP 402 on Harbinger endpoints.
 
 ## 4. Grants
 
-A grant is a bearer token of the form `hp1.<payload>`. The 1.0 reference implementation accepts the published demo grant `hp1.demo` and any token that starts with `hp1.`.
+### X403-HP-2 grants
+
+A production grant is `hp2.<BaseTxHash>.<unixSeconds>.<eip191Signature>`. The signature is EIP-191 `personal_sign` over exactly:
+
+```
+X403-HP-2 grant
+tx: <txHash, lowercase>
+route: <request path without /api, e.g. /v1/stream>
+ts: <unixSeconds>
+```
+
+The server MUST recover the signer and require it to equal the `from` of the Base tx; MUST reject timestamps more than 300 s old or ahead (`grant-stale`); MUST accept each signed header once (`grant-replayed`). The tx binds to its first watch and is billed per ping.
+
+### Deprecated: X403-HP-1
+
+`hp1.<BaseTxHash>` is a bare public tx hash, replayable by anyone reading the chain. It is accepted only until `HP1_SUNSET` (default 2026-11-04T00:00:00Z), then answers 403 `grant-hp1-deprecated`.
+
+Historical: a grant was a bearer token of the form `hp1.<payload>`. The 1.0 reference implementation accepts the published demo grant `hp1.demo` and any token that starts with `hp1.`.
 
 Production deployments MUST reject `hp1.demo`.
 
@@ -150,4 +167,4 @@ POST /v1/patrol with a valid grant runs a sweep. GET /v1/agency returns the cata
 
 ## Citation
 
-nicsins, "Harbinger: Agent Grant and Notification Protocol", X403-HP-1, x403-HARBINGER/1.0, September 2026.
+nicsins, "Harbinger: Agent Grant and Notification Protocol", X403-HP-2, x403-HARBINGER/1.0, September 2026.

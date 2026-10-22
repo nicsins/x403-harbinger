@@ -13,6 +13,7 @@ export async function POST(request: Request) {
   // but the tx grant is still bound to that watch and consumes one use.
   const gate = await gateGrant(request.headers.get(H.grant), request.headers.get(H.watch) ?? "w_btc_10_1h", {
     consume: true,
+    route: new URL(request.url).pathname,
   });
   if (!gate.ok) return gate.response;
   const snap = await runPatrol(true);

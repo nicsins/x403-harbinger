@@ -29,7 +29,7 @@ export type { GrantOpts, GrantCheck };
 
 export const PROTOCOL = "x403-HARBINGER/1.0";
 export const DESIGNATION = "x403-HARBINGER";
-export const DOCUMENT = "X403-HP-1";
+export const DOCUMENT = "X403-HP-2";
 export const URN = "urn:x403:harbinger:1.0";
 export const MEDIA = "application/vnd.x403.harbinger+json";
 export const DEMO_GRANT = "hp1.demo";
