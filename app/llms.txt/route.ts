@@ -27,7 +27,8 @@ SpaceX, xAI, and X are private — last-reported marks, not live quotes.
 
 - Patrol: POST /v1/patrol
 - Demo grant (reference only; rejected in production): hp1.demo
-- Production grant form: hp1.<BaseTxHash> (verified Base USDC Transfer to payTo)
+- Production grant form (X403-HP-2): hp2.<BaseTxHash>.<unixSeconds>.<eip191Signature>; EIP-191 signature by the tx sender over "X403-HP-2 grant\\ntx: <txHash>\\nroute: <path>\\nts: <unixSeconds>"; 5 min window; single use per signed header
+- Deprecated: hp1.<BaseTxHash> (replayable), accepted only until HP1_SUNSET (default 2026-11-04)
 
 ## Network
 
@@ -36,7 +37,7 @@ SpaceX, xAI, and X are private — last-reported marks, not live quotes.
 
 ## Citation
 
-nicsins, "Harbinger: Agent Grant and Notification Protocol", X403-HP-1, x403-HARBINGER/1.0, September 2026.
+nicsins, "Harbinger: Agent Grant and Notification Protocol", X403-HP-2, x403-HARBINGER/1.0, September 2026.
 `;
 
 export function GET() {

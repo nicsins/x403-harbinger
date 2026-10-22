@@ -261,6 +261,7 @@ describe("store selection + failure", () => {
       kind: "upstash",
       get: async () => { throw new Error("down"); },
       redeem: async () => { throw new Error("down"); },
+      claimNonce: async () => { throw new Error("down"); },
     };
     const r = await checkGrant(g(REAL_TX), W10.id, W10, { consume: true, store: broken });
     assert.equal(!r.ok && r.status, 503);

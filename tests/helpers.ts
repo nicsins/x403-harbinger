@@ -53,6 +53,7 @@ const ENV_KEYS = [
   "UPSTASH_REDIS_REST_TOKEN",
   "BASE_RPC_URL",
   "CRON_SECRET",
+  "HP1_SUNSET",
 ];
 export function withEnv(env: Record<string, string | undefined>) {
   const saved: Record<string, string | undefined> = {};

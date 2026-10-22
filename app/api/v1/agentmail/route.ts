@@ -37,7 +37,7 @@ export async function POST(request: Request) {
     if (!paidAgentmailLive()) return paidNotifyPausedResponse("agentmail");
     const watchIdRaw = typeof body.watchId === "string" ? body.watchId : null;
     const found = findWatch(watchIdRaw);
-    const check = await checkGrant(grant, watchIdRaw, found, { consume: true });
+    const check = await checkGrant(grant, watchIdRaw, found, { consume: true, route: new URL(request.url).pathname });
     if (!check.ok) {
       if (check.status !== 403) return grantDeniedResponse(check, found ?? watchById(null), watchIdRaw);
       return Response.json({ ok: false, forbidden: check.reason }, { status: 403 });
