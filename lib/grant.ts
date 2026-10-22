@@ -1,10 +1,13 @@
 /**
  * Base USDC grant verification, bound to one watch.
- * - hp2 (X403-HP-2): hp2.<txHash>.<unixSeconds>.<eip191Signature>. The signer must be the tx `from`.
+ * - hp2 (X403-HP-2): hp2.<txHash>.<unixSeconds>.<signature>. The signer must be the payer: the `from` of a
+ *   USDC Transfer to the treasury in that tx that alone meets the watch price (not tx.from, which is a
+ *   bundler for smart wallets). Verified with viem verifyMessage (EOA, ERC-1271, ERC-6492).
  * - hp1 (deprecated): hp1.<txHash>. Bearer tx hash; replayable by anyone reading the chain.
  *   Accepted only until HP1_SUNSET (default DEFAULT_HP1_SUNSET).
  */
-import { recoverMessageAddress } from "viem";
+import { createPublicClient, http, type Hex } from "viem";
+import { base } from "viem/chains";
 import { LEGACY_PAY_TO, TREASURY_ADDRESS, legacyMaxBlock } from "./treasury";
 import { grantStoreFromEnv, type GrantBinding, type GrantStore } from "./grant-store";
 
@@ -48,7 +51,7 @@ export function allowDemoGrant(): boolean {
 }
 
 const TX_GRANT_RE = /^hp1\.(0x[a-fA-F0-9]{64})$/i;
-const HP2_GRANT_RE = /^hp2\.(0x[a-fA-F0-9]{64})\.(\d{1,12})\.(0x[a-fA-F0-9]{130})$/i;
+const HP2_GRANT_RE = /^hp2\.(0x[a-fA-F0-9]{64})\.(\d{1,12})\.(0x(?:[a-fA-F0-9]{2}){65,4096})$/i;
 
 /** Max age (and max future skew) of an hp2 timestamp. */
 export const HP2_MAX_SKEW_MS = 5 * 60 * 1000;
@@ -152,6 +155,42 @@ function creditedRecipients(receipt: RpcReceipt): string[] {
     if (bn === null || bn > max) return [PAY_TO];
   }
   return [PAY_TO, ...LEGACY_PAY_TO];
+}
+
+/**
+ * Payers in a settled receipt: `from` addresses of USDC Transfers to a credited recipient,
+ * summed per payer, keeping those whose total meets minAtomic. Smart-wallet (4337) txs have a
+ * bundler as tx.from; the payer here is the wallet itself.
+ */
+export function payersInReceipt(receipt: RpcReceipt | null, minAtomic: bigint): string[] {
+  if (!receipt || receipt.status !== "0x1" || !Array.isArray(receipt.logs)) return [];
+  const recipients = creditedRecipients(receipt);
+  const sums = new Map<string, bigint>();
+  for (const log of receipt.logs) {
+    if (!log.address || !addrEq(log.address, USDC_BASE)) continue;
+    const topics = log.topics ?? [];
+    if (topics.length < 3 || !addrEq(topics[0]!, TRANSFER_TOPIC0)) continue;
+    if (!recipients.some((r) => addrEq(topicAddress(topics[2]!), r))) continue;
+    let v: bigint;
+    try {
+      v = BigInt("0x" + ((log.data ?? "0x0").replace(/^0x/i, "") || "0"));
+    } catch {
+      continue;
+    }
+    const from = topicAddress(topics[1]!);
+    sums.set(from, (sums.get(from) ?? BigInt(0)) + v);
+  }
+  return [...sums].filter(([, v]) => v > BigInt(0) && v >= minAtomic).map(([a]) => a);
+}
+
+/** EOA, ERC-1271 (deployed smart wallet) and ERC-6492 (counterfactual) signatures, via Base RPC. */
+export async function verifyHp2Signature(address: string, message: string, signature: string): Promise<boolean> {
+  try {
+    const client = createPublicClient({ chain: base, transport: http(process.env.BASE_RPC_URL || "https://mainnet.base.org") });
+    return await client.verifyMessage({ address: address as Hex, message, signature: signature as Hex });
+  } catch {
+    return false;
+  }
 }
 
 /** Sum of USDC (atomic, 6dp) transferred to the treasury (or a legacy payTo, historical only) in a successful receipt. */
@@ -317,15 +356,22 @@ export async function checkGrant(
     let receipt: RpcReceipt | null | undefined;
     if (hp2 && !opts.internal) {
       receipt = await fetchReceipt(tx);
-      const from = receipt?.from;
-      if (!from) return deny(403, "grant-required", { txHash: tx });
-      let signer: string;
-      try {
-        signer = await recoverMessageAddress({ message: hp2Message(tx, opts.route!, hp2.ts), signature: hp2.signature });
-      } catch {
-        return deny(403, "grant-bad-signature", { txHash: tx });
+      const payers = payersInReceipt(receipt ?? null, usdcAtomic(watch.priceUsdc));
+      if (payers.length === 0) {
+        if (!receipt || receipt.status !== "0x1") return deny(403, "grant-required", { txHash: tx });
+        const paid = usdcPaidInReceipt(receipt);
+        if (paid === null || paid <= BigInt(0)) return deny(403, "grant-required", { txHash: tx });
+        return deny(403, "insufficient-payment", { txHash: tx });
       }
-      if (!addrEq(signer, from)) return deny(403, "grant-bad-signature", { txHash: tx });
+      const message = hp2Message(tx, opts.route!, hp2.ts);
+      let signed = false;
+      for (const payer of payers) {
+        if (await verifyHp2Signature(payer, message, hp2.signature)) {
+          signed = true;
+          break;
+        }
+      }
+      if (!signed) return deny(403, "grant-bad-signature", { txHash: tx });
       // One request per signed header: a captured hp2 header cannot be replayed.
       const fresh = await store.claimNonce(`${tx}:${hp2.signature}`, HP2_NONCE_TTL_MS);
       if (!fresh) return deny(403, "grant-replayed", { txHash: tx });
@@ -368,7 +414,7 @@ export function grantAdvert(header: string) {
     header,
     signature: {
       type: "EIP-191 personal_sign",
-      signer: "must equal the tx `from` address",
+      signer: "the payer: `from` of the USDC Transfer to payTo that meets the price (not tx.from). EOA, ERC-1271 and ERC-6492 signatures accepted",
       message: "X403-HP-2 grant\\ntx: <txHash lowercase>\\nroute: <request path, e.g. /v1/stream>\\nts: <unixSeconds>",
       maxSkewSeconds: HP2_MAX_SKEW_MS / 1000,
       singleUse: "each signed header is accepted once",

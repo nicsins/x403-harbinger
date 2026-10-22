@@ -33,9 +33,9 @@ export default function SpecPage() {
       <article className="panel">
         <h2>4–5. Grants and handshake</h2>
         <p className="muted">A grant is a bearer token of the form <span className="mono">{GRANT_FORM}</span>. Demo grant <span className="mono">hp1.demo</span> (preview only).</p>
-        <p className="muted">The signature is EIP-191 personal_sign by the address that sent the Base USDC payment (the tx <span className="mono">from</span>) over:</p>
+        <p className="muted">The signature is EIP-191 personal_sign by the wallet that paid: the <span className="mono">from</span> of the USDC Transfer to payTo that meets the price, not the tx sender (a bundler for smart wallets). EOA, ERC-1271 and ERC-6492 smart-wallet signatures are accepted. Over:</p>
         <pre className="mono">{"X403-HP-2 grant\ntx: <txHash lowercase>\nroute: <request path, e.g. /v1/stream>\nts: <unixSeconds>"}</pre>
-        <p className="muted">Timestamps older than 5 minutes or more than 5 minutes ahead are rejected (grant-stale). A signer other than the tx sender is rejected (grant-bad-signature). Each signed header is accepted once (grant-replayed). The tx still binds to its first watch and is billed per ping: each fired ping consumes one paid use.</p>
+        <p className="muted">Timestamps older than 5 minutes or more than 5 minutes ahead are rejected (grant-stale). A signer other than the payer is rejected (grant-bad-signature). Each signed header is accepted once (grant-replayed). The tx still binds to its first watch and is billed per ping: each fired ping consumes one paid use.</p>
         <p className="muted"><strong>Deprecated:</strong> <span className="mono">hp1.&lt;BaseTxHash&gt;</span> (X403-HP-1) is a bare public tx hash and can be replayed by anyone who reads the chain. It is accepted only until {HP1_SUNSET}, then answers 403 grant-hp1-deprecated.</p>
         <ol className="list">
           <li className="item">GET /v1/stream with X-Harbinger-Watch.</li>

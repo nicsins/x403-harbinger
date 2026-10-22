@@ -27,7 +27,7 @@ SpaceX, xAI, and X are private — last-reported marks, not live quotes.
 
 - Patrol: POST /v1/patrol
 - Demo grant (reference only; rejected in production): hp1.demo
-- Production grant form (X403-HP-2): hp2.<BaseTxHash>.<unixSeconds>.<eip191Signature>; EIP-191 signature by the tx sender over "X403-HP-2 grant\\ntx: <txHash>\\nroute: <path>\\nts: <unixSeconds>"; 5 min window; single use per signed header
+- Production grant form (X403-HP-2): hp2.<BaseTxHash>.<unixSeconds>.<eip191Signature>; EIP-191 signature by the USDC payer (Transfer from address, EOA or ERC-1271/6492 smart wallet) over "X403-HP-2 grant\\ntx: <txHash>\\nroute: <path>\\nts: <unixSeconds>"; 5 min window; single use per signed header
 - Deprecated: hp1.<BaseTxHash> (replayable), accepted only until HP1_SUNSET (default 2026-11-04)
 
 ## Network
