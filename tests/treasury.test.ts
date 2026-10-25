@@ -44,6 +44,14 @@ describe("treasury", () => {
     assert.equal(usdcPaidInReceipt({ status: "0x1", blockNumber: "0x65", logs: [transferLog(1000, NEW_TOPIC)] }), BigInt(1000));
   });
 
+  test("hp1.demo is not advertised in grantAdvert", () => {
+    const ad = JSON.stringify(grantAdvert("x"));
+    assert.ok(!ad.includes("hp1.demo"));
+    assert.ok(!ad.includes('"demo"'));
+    assert.ok(!ad.includes("demo_note"));
+    assert.ok(!ad.includes("demo_production"));
+  });
+
   test("legacy address is never advertised", () => {
     assert.ok(!JSON.stringify(grantAdvert("x")).toLowerCase().includes("da1eab"));
     const root = join(__dirname, "..");

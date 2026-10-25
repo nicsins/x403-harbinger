@@ -37,7 +37,7 @@ Retry with:
 X-Harbinger-Grant: hp1.<payload>
 ```
 
-Reference demo grant: `hp1.demo`.
+Demo grant `hp1.demo` is not advertised. Production rejects it; preview/dev only with `ALLOW_DEMO_GRANT=1`.
 
 ## Agency
 
@@ -53,7 +53,7 @@ The public desk (`/desk`, `GET /v1/tape`) publishes last prints for hot coins, G
 GET /v1/tape
 GET /v1/agency
 POST /v1/patrol
-X-Harbinger-Grant: hp1.demo
+X-Harbinger-Grant: hp2.<BaseTxHash>.<unixSeconds>.<eip191Signature>
 ```
 
 News, elections, advertising, and sentiment are reserved lanes. Correlation scores are estimates, not investment advice.

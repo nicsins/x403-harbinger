@@ -28,7 +28,7 @@ test("cards mirror /v1/watches ids exactly (no extra SKUs: no EUR/GBP #4, no Pre
   const cards = ((await (await cardsGET()).json()) as { cards: Card[] }).cards.map((c) => c.watchId);
   const watches = ((await (await watchesGET(new Request("https://x/v1/watches"))).json()) as { watches: { id: string }[] }).watches.map((w) => w.id);
   assert.deepEqual(cards, watches);
-  assert.equal(cards.length, 18);
+  assert.equal(cards.length, 21);
   for (const id of ["w_eur_gbp_roc", "w_eurusd_usdchf_inv", "w_aud_nzd_spread", "w_usdjpy_dxy"]) assert.ok(!cards.includes(id), id);
 });
 
