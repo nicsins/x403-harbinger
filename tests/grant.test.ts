@@ -5,6 +5,7 @@ import {
   usdcPaidInReceipt,
   grantQuota,
   GRANT_POLICY,
+  GRANT_MONITOR_GRACE_MS,
   parseTxGrant,
   type GrantWatch,
 } from "../lib/grant";
@@ -262,6 +263,7 @@ describe("store selection + failure", () => {
       get: async () => { throw new Error("down"); },
       redeem: async () => { throw new Error("down"); },
       claimNonce: async () => { throw new Error("down"); },
+      coverUntil: async () => { throw new Error("down"); },
     };
     const r = await checkGrant(g(REAL_TX), W10.id, W10, { consume: true, store: broken });
     assert.equal(!r.ok && r.status, 503);
@@ -310,3 +312,43 @@ describe("UpstashGrantStore wire (mocked REST)", () => {
     }
   });
 });
+
+describe("HP-2 grant cover through monitor deadline", () => {
+  test("coverUntil extends an already-expired grant for the same watch", async () => {
+    const tx = synthTx(90);
+    rpc.restore();
+    rpc = mockRpc({ [tx]: { status: "0x1", logs: [transferLog(220000)] } });
+    assert.ok((await use(g(tx), W10, { consume: false })).ok);
+    const bound = await store.get(tx);
+    assert.ok(bound);
+    // Force bare TTL into the past (simulates early bind + later monitor).
+    bound!.expiresAt = T0 + 1_000;
+    const late = await use(g(tx), W10, { consume: false, now: T0 + DAY });
+    assert.deepEqual([!late.ok && late.status, !late.ok && late.reason], [403, "grant-expired"]);
+    const covered = await store.coverUntil(tx, "w_btc_10_1h", T0 + DAY + DAY);
+    assert.ok(covered.ok);
+    assert.equal(covered.ok && covered.binding.expiresAt, T0 + DAY + DAY);
+    const again = await use(g(tx), W10, { consume: false, now: T0 + DAY + 60_000 });
+    assert.ok(again.ok && again.kind === "tx");
+  });
+
+  test("new binding covers watch.windowMs when longer than policy TTL", async () => {
+    const tx = synthTx(91);
+    rpc.restore();
+    rpc = mockRpc({ [tx]: { status: "0x1", logs: [transferLog(70000)] } });
+    const oil: GrantWatch = { id: "w_oil_usd", priceUsdc: 0.07, billing: "per-ping", windowMs: 48 * 60 * 60 * 1000 };
+    const r = await use(g(tx), oil, { consume: false });
+    assert.ok(r.ok && r.kind === "tx");
+    if (r.ok && r.kind === "tx") {
+      assert.equal(r.binding.expiresAt, T0 + oil.windowMs! + GRANT_MONITOR_GRACE_MS);
+    }
+  });
+
+  test("coverUntil refuses a watch mismatch", async () => {
+    assert.ok((await use(g(REAL_TX), W10, { consume: false })).ok);
+    const r = await store.coverUntil(REAL_TX, "w_btc_5_1h", T0 + 2 * DAY);
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.reason, "watch-mismatch");
+  });
+});
+

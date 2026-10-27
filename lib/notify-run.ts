@@ -11,7 +11,15 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { watchBookById, type WatchDef } from "@/lib/agency";
 import { nowMs } from "@/lib/clock";
-import { allowDemoGrant, checkGrant, DEMO_GRANT, parseTxGrant, type GrantCheck } from "@/lib/grant";
+import {
+  allowDemoGrant,
+  checkGrant,
+  coverGrantForMonitor,
+  DEMO_GRANT,
+  GRANT_MONITOR_GRACE_MS,
+  parseTxGrant,
+  type GrantCheck,
+} from "@/lib/grant";
 import type { GrantBinding } from "@/lib/grant-store";
 import { callbackIsPublic, newHookSecret, signBody, validateCallbackUrl } from "@/lib/hook-delivery";
 import { fetchInstrumentQuotes, type InstrumentQuote } from "@/lib/live-quote";
@@ -29,6 +37,7 @@ import {
   paidHooksLive,
   paidNotifyPausedResponse,
   paidStreamLive,
+  type GrantGate,
   type Watch,
 } from "@/lib/protocol";
 import { decideTrigger, type LegObservation, type TriggerDecision } from "@/lib/trigger";
@@ -38,6 +47,59 @@ const SOURCE_NOTE =
   "Trigger uses the Yahoo 1-minute chart quote (regularMarketPrice / regularMarketTime, else the last 1-minute close). Hour bars are the patrol tape only and are not a fire source. A quote older than maxAgeMs, or timestamped at or before the monitor started, cannot fire.";
 
 type OkCheck = Extract<GrantCheck, { ok: true }>;
+
+function monitorCoverUntil(deadlineAt: number): number {
+  return deadlineAt + GRANT_MONITOR_GRACE_MS;
+}
+
+async function ensureGrantCoversMonitor(check: OkCheck, m: Monitor): Promise<OkCheck> {
+  if (check.kind !== "tx") return check;
+  const binding = await coverGrantForMonitor(check.txHash, m.watchId, monitorCoverUntil(m.deadlineAt));
+  if (!binding) return check;
+  return { ...check, binding };
+}
+
+/**
+ * When a bare grant TTL has lapsed but the client still holds a valid open (or
+ * terminal) monitor id for that tx+watch, extend cover through the deadline and
+ * re-check. Lets buyers finish the window they paid for (HP-2 cash-proof bug).
+ */
+async function recoverMonitorHeldGrant(
+  request: Request,
+  grantRaw: string | null,
+  watchIdRaw: string | null,
+  denied: Response,
+): Promise<Extract<GrantGate, { ok: true }> | null> {
+  if (denied.status !== 403) return null;
+  if ((denied.headers.get(H.forbidden) ?? "") !== "grant-expired") return null;
+  const monitorId = request.headers.get(H.monitor);
+  if (!monitorId) return null;
+  const txHash = parseTxGrant(grantRaw ?? "");
+  if (!txHash) return null;
+  const watch = findWatch(watchIdRaw);
+  if (!watch) return null;
+  const store = monitorStoreFromEnv();
+  if (!store) return null;
+  let m: Monitor | null;
+  try {
+    m = await store.get(monitorId);
+  } catch {
+    return null;
+  }
+  if (!m || m.grantKey !== txHash || m.watchId !== watch.id) return null;
+  const now = nowMs();
+  // Pending: allow through the deadline (+grace). Terminal: always allow reading the result.
+  if (m.status === "pending" && now > monitorCoverUntil(m.deadlineAt)) return null;
+  await coverGrantForMonitor(txHash, watch.id, Math.max(monitorCoverUntil(m.deadlineAt), now + 60_000));
+  const check = await checkGrant(grantRaw, watchIdRaw, watch, {
+    consume: false,
+    now,
+    route: new URL(request.url).pathname,
+    internal: true,
+  });
+  if (!check.ok) return null;
+  return { ok: true, watch, check };
+}
 
 function wellFormedGrant(raw: string | null): boolean {
   const g = (raw ?? "").trim();
@@ -282,6 +344,7 @@ type Step =
 
 async function evaluate(m: Monitor, watch: Watch, book: WatchDef, check: OkCheck, store: MonitorStore, now: number): Promise<Step> {
   if (m.status !== "pending") return { kind: "monitor", monitor: m };
+  check = await ensureGrantCoversMonitor(check, m);
   const quotes = await loadQuotes(book, now);
   const decision = decideTrigger({
     logic: book.logic,
@@ -386,6 +449,9 @@ async function openOrResume(
     ...(hook ? { callbackUrl: hook.callbackUrl, hookSecret: hook.hookSecret } : {}),
   };
   const created = await store.create(monitor, renew && Boolean(existing));
+  if (created.created && check.kind === "tx") {
+    await coverGrantForMonitor(check.txHash, watch.id, monitorCoverUntil(created.monitor.deadlineAt));
+  }
   return { monitor: created.monitor, created: created.created };
 }
 
@@ -412,8 +478,12 @@ export async function handleStream(request: Request): Promise<Response> {
     const named = findWatch(watchIdRaw);
     if (named && !watchBookById(named.id)) return notPriceWatch();
   }
-  const gate = await gateGrant(grantRaw, watchIdRaw, { consume: false, route: new URL(request.url).pathname });
-  if (!gate.ok) return gate.response;
+  let gate = await gateGrant(grantRaw, watchIdRaw, { consume: false, route: new URL(request.url).pathname });
+  if (!gate.ok) {
+    const recovered = await recoverMonitorHeldGrant(request, grantRaw, watchIdRaw, gate.response);
+    if (!recovered) return gate.response;
+    gate = recovered;
+  }
   const book = watchBookById(gate.watch.id);
   if (!book) return notPriceWatch();
   const renew = request.headers.get(H.renew) === "1";
@@ -525,8 +595,12 @@ export async function handleHookGet(request: Request): Promise<Response> {
     const named = findWatch(watchIdRaw);
     if (named && !watchBookById(named.id)) return notPriceWatch();
   }
-  const gate = await gateGrant(grantRaw, watchIdRaw, { consume: false, route: new URL(request.url).pathname });
-  if (!gate.ok) return asHookDenial(gate.response);
+  let gate = await gateGrant(grantRaw, watchIdRaw, { consume: false, route: new URL(request.url).pathname });
+  if (!gate.ok) {
+    const recovered = await recoverMonitorHeldGrant(request, grantRaw, watchIdRaw, gate.response);
+    if (!recovered) return asHookDenial(gate.response);
+    gate = recovered;
+  }
   const book = watchBookById(gate.watch.id);
   if (!book) return notPriceWatch();
   const out = await withStore(async (store) => {
@@ -665,6 +739,7 @@ export async function handlePump(request: Request): Promise<Response> {
 async function liveTxCheck(m: Monitor): Promise<OkCheck | null> {
   const watch = findWatch(m.watchId);
   if (!watch) return null;
+  await coverGrantForMonitor(m.grantKey, m.watchId, monitorCoverUntil(m.deadlineAt));
   const check = await checkGrant(`hp1.${m.grantKey}`, m.watchId, watch, { consume: false, now: nowMs(), internal: true });
   if (!check.ok || check.kind !== "tx") return null;
   return check;

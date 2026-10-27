@@ -43,6 +43,12 @@ export const GRANT_POLICY = {
   session: { ttlMs: 24 * HOUR_MS, maxUses: 288 },
 } as const;
 
+/**
+ * Extra life past a monitor deadline so the final poll / no-move / fire can land.
+ * Grant expiry must never precede the monitor window it paid to open (HP-2 cash-proof).
+ */
+export const GRANT_MONITOR_GRACE_MS = 5 * 60 * 1000;
+
 /** Prod rejects demo unless ALLOW_DEMO_GRANT=1. Preview/dev keep demo for UI pages. */
 export function allowDemoGrant(): boolean {
   if (process.env.ALLOW_DEMO_GRANT === "1") return true;
@@ -257,7 +263,14 @@ export async function isValidGrant(
   return ok;
 }
 
-export type GrantWatch = { id: string; priceUsdc: number; billing: "per-ping" | "session" };
+export type GrantWatch = { id: string; priceUsdc: number; billing: "per-ping" | "session"; /** Watch window; grant TTL is at least this long. */ windowMs?: number };
+
+/** Absolute expiresAt for a new binding: policy TTL, but never shorter than the watch window + grace. */
+export function grantExpiresAt(now: number, watch: GrantWatch): number {
+  const policy = GRANT_POLICY[watch.billing];
+  const windowMs = watch.windowMs ?? 0;
+  return now + Math.max(policy.ttlMs, windowMs) + (windowMs > 0 ? GRANT_MONITOR_GRACE_MS : 0);
+}
 
 export function grantQuota(watch: GrantWatch, paidAtomic: bigint): number {
   const policy = GRANT_POLICY[watch.billing];
@@ -380,13 +393,12 @@ export async function checkGrant(
       const paid = receipt !== undefined ? usdcPaidInReceipt(receipt) : await usdcPaidToPayTo(tx);
       if (paid === null || paid <= BigInt(0)) return deny(403, "grant-required", { txHash: tx });
       if (paid < usdcAtomic(watch.priceUsdc)) return deny(403, "insufficient-payment", { txHash: tx });
-      const policy = GRANT_POLICY[watch.billing];
       proposal = {
         watchId: watch.id,
         quota: grantQuota(watch, paid),
         used: 0,
         boundAt: now,
-        expiresAt: now + policy.ttlMs,
+        expiresAt: grantExpiresAt(now, watch),
         paidAtomic: paid.toString(),
       };
     }
@@ -404,6 +416,23 @@ export async function checkGrant(
   } catch {
     return deny(503, "grant-store-unavailable", { txHash: tx });
   }
+}
+
+
+/**
+ * Ensure a bound grant lives at least until `untilMs` (typically monitor.deadlineAt + grace).
+ * No-op when unbound / wrong watch. Used when a monitor opens and on each pending poll.
+ */
+export async function coverGrantForMonitor(
+  txHash: string,
+  watchId: string,
+  untilMs: number,
+  store?: GrantStore | null,
+): Promise<GrantBinding | null> {
+  const s = store === undefined ? grantStoreFromEnv() : store;
+  if (!s) return null;
+  const r = await s.coverUntil(txHash, watchId, untilMs);
+  return r.ok ? r.binding : r.binding ?? null;
 }
 
 export function grantAdvert(header: string) {
@@ -433,8 +462,8 @@ export function grantAdvert(header: string) {
     billing: "per-ping: each fired ping consumes one paid use",
     value: "USDC Transfer(s) to payTo in the tx must total >= the watch priceUsdc",
     policy: {
-      "per-ping": `floor(paid/price) pings, max ${GRANT_POLICY["per-ping"].maxUses}, expire ${GRANT_POLICY["per-ping"].ttlMs / HOUR_MS}h after first use`,
-      session: `${GRANT_POLICY.session.ttlMs / HOUR_MS}h from first use, fair-use cap ${GRANT_POLICY.session.maxUses} requests`,
+      "per-ping": `floor(paid/price) pings, max ${GRANT_POLICY["per-ping"].maxUses}, expire max(policy ${GRANT_POLICY["per-ping"].ttlMs / HOUR_MS}h, watch window)+${GRANT_MONITOR_GRACE_MS / 60000}m grace after first use; open monitors extend cover through their deadline`,
+      session: `${GRANT_POLICY.session.ttlMs / HOUR_MS}h from first use, fair-use cap ${GRANT_POLICY.session.maxUses} requests; open monitors extend cover through their deadline`,
     },
   };
 }
