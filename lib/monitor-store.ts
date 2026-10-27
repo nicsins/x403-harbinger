@@ -199,6 +199,8 @@ export class MemoryMonitorStore implements MonitorStore {
       if (!m) return { ok: false, reason: "missing" };
       if (m.status === "fired" || m.status === "no-move") return { ok: true, idempotent: true, monitor: clone(m) };
       if (m.grantKey !== "demo") {
+        // Open monitor owns the grant through its deadline (+5m grace), even if the bare TTL lapsed.
+        await this.grants.coverUntil(m.grantKey, m.watchId, m.deadlineAt + 5 * 60 * 1000);
         const redeemed = await this.grants.redeem(m.grantKey, m.watchId, now, true);
         if (!redeemed.ok) {
           const reason =
@@ -401,6 +403,11 @@ if ARGV[6] ~= '1' then
     return cjson.encode({ok=false, reason='watch-mismatch', binding=b})
   end
   local now = tonumber(ARGV[1])
+  -- Grant must cover the monitor window: effective expiry is max(expiresAt, deadlineAt + 5m grace).
+  local cover = math.max(tonumber(b.expiresAt), tonumber(m.deadlineAt) + 300000)
+  if cover > tonumber(b.expiresAt) then
+    b.expiresAt = cover
+  end
   if now >= tonumber(b.expiresAt) then
     return cjson.encode({ok=false, reason='expired', binding=b})
   end

@@ -49,6 +49,12 @@ export interface GrantStore {
     consume: boolean,
     proposal?: GrantBinding,
   ): Promise<RedeemResult>;
+  /**
+   * Bump expiresAt up to `untilMs` when the binding is for watchId.
+   * Works on already-expired grants so an open monitor can finish its window
+   * (HP-2: grant TTL must not end before the monitor deadline).
+   */
+  coverUntil(txHash: string, watchId: string, untilMs: number): Promise<RedeemResult>;
   /** Set-if-absent with TTL. true = first claim (fresh), false = already seen (replay). */
   claimNonce(key: string, ttlMs: number): Promise<boolean>;
 }
@@ -70,6 +76,21 @@ export function applyRedeem(
   return { result: { ok: true, binding: next }, next };
 }
 
+/** Pure cover shared by the memory store and tests (mirrors COVER_LUA). */
+export function applyCoverUntil(
+  existing: GrantBinding | null,
+  watchId: string,
+  untilMs: number,
+): { result: RedeemResult; next: GrantBinding | null } {
+  if (!existing) return { result: { ok: false, reason: "unbound" }, next: null };
+  if (existing.watchId !== watchId) {
+    return { result: { ok: false, reason: "watch-mismatch", binding: existing }, next: existing };
+  }
+  const next =
+    untilMs > existing.expiresAt ? { ...existing, expiresAt: untilMs } : existing;
+  return { result: { ok: true, binding: next }, next };
+}
+
 export class MemoryGrantStore implements GrantStore {
   readonly kind = "memory" as const;
   private readonly map = new Map<string, GrantBinding>();
@@ -82,6 +103,13 @@ export class MemoryGrantStore implements GrantStore {
     const key = txHash.toLowerCase();
     // Synchronous between read and write: atomic within one Node process.
     const { result, next } = applyRedeem(this.map.get(key) ?? null, watchId, now, consume, proposal);
+    if (next) this.map.set(key, next);
+    return result;
+  }
+
+  async coverUntil(txHash: string, watchId: string, untilMs: number) {
+    const key = txHash.toLowerCase();
+    const { result, next } = applyCoverUntil(this.map.get(key) ?? null, watchId, untilMs);
     if (next) this.map.set(key, next);
     return result;
   }
@@ -124,6 +152,21 @@ if ARGV[3] == '1' then
   b.used = tonumber(b.used) + 1
 end
 redis.call('SET', KEYS[1], cjson.encode(b))
+return cjson.encode({ok=true, binding=b})
+`;
+
+const COVER_LUA = `
+local v = redis.call('GET', KEYS[1])
+if not v then return cjson.encode({ok=false, reason='unbound'}) end
+local b = cjson.decode(v)
+if b.watchId ~= ARGV[1] then
+  return cjson.encode({ok=false, reason='watch-mismatch', binding=b})
+end
+local untilMs = tonumber(ARGV[2])
+if untilMs > tonumber(b.expiresAt) then
+  b.expiresAt = untilMs
+  redis.call('SET', KEYS[1], cjson.encode(b))
+end
 return cjson.encode({ok=true, binding=b})
 `;
 
@@ -189,6 +232,22 @@ export class UpstashGrantStore implements GrantStore {
       proposal ? JSON.stringify(proposal) : "",
     ]);
     if (typeof raw !== "string") throw new Error("grant store: bad EVAL result");
+    const r = JSON.parse(raw) as { ok: boolean; reason?: RedeemReason; binding?: GrantBinding };
+    const binding = r.binding ? this.normalize(r.binding) : undefined;
+    if (r.ok && binding) return { ok: true as const, binding };
+    return { ok: false as const, reason: r.reason ?? "unbound", ...(binding ? { binding } : {}) };
+  }
+
+  async coverUntil(txHash: string, watchId: string, untilMs: number) {
+    const raw = await this.cmd([
+      "EVAL",
+      COVER_LUA,
+      1,
+      this.prefix + txHash.toLowerCase(),
+      watchId,
+      untilMs,
+    ]);
+    if (typeof raw !== "string") throw new Error("grant store: bad COVER EVAL result");
     const r = JSON.parse(raw) as { ok: boolean; reason?: RedeemReason; binding?: GrantBinding };
     const binding = r.binding ? this.normalize(r.binding) : undefined;
     if (r.ok && binding) return { ok: true as const, binding };
