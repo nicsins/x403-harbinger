@@ -285,6 +285,43 @@ describe("paid stream and hooks", () => {
     assert.equal((await sharedMemoryStore().get(REAL_TX))?.used, 1);
   });
 
+  test("monitor-held poll survives bare grant TTL until the deadline (HP-2)", async () => {
+    q("btc", 100, T0 - 30_000);
+    const opened = await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") });
+    assert.equal(opened.status, 202);
+    const pending = (await opened.json()) as { monitorId: string; deadlineAt: string };
+    const binding = await sharedMemoryStore().get(REAL_TX);
+    assert.ok(binding);
+    // Simulate early bind: bare TTL lapsed while the monitor window is still open.
+    binding!.expiresAt = now - 1_000;
+    const denied = await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") });
+    assert.equal(denied.status, 403);
+    assert.equal(denied.headers.get("X-Harbinger-Forbidden"), "grant-expired");
+    const held = await stream({
+      ...G(REAL_TX),
+      ...W("w_btc_10_1h"),
+      "X-Harbinger-Monitor": pending.monitorId,
+    });
+    assert.equal(held.status, 202);
+    const body = (await held.json()) as { status: string; monitorId: string; consumed: boolean };
+    assert.equal(body.status, "pending");
+    assert.equal(body.monitorId, pending.monitorId);
+    assert.equal(body.consumed, false);
+    assert.ok(((await sharedMemoryStore().get(REAL_TX))!.expiresAt) >= Date.parse(pending.deadlineAt));
+
+    // Fire still works after the TTL heal.
+    now = T0 + 90_000;
+    q("btc", 120, T0 + 80_000);
+    const fired = await stream({
+      ...G(REAL_TX),
+      ...W("w_btc_10_1h"),
+      "X-Harbinger-Monitor": pending.monitorId,
+    });
+    assert.equal(fired.status, 200);
+    assert.equal(((await fired.json()) as { status: string; consumed: boolean }).status, "fired");
+    assert.equal((await sharedMemoryStore().get(REAL_TX))?.used, 1);
+  });
+
   test("no move at the deadline does not consume and is idempotent", async () => {
     q("btc", 100, T0 - 30_000);
     const opened = await stream({ ...G(REAL_TX), ...W("w_btc_10_1h") });
