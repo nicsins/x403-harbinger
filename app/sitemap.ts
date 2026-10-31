@@ -8,6 +8,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { path: "/edge", freq: "hourly", priority: 0.9 },
     { path: "/agency", freq: "hourly", priority: 0.9 },
     { path: "/spec", freq: "weekly", priority: 0.8 },
+    { path: "/docs", freq: "weekly", priority: 0.8 },
     { path: "/directory", freq: "daily", priority: 0.75 },
     { path: "/crawlers", freq: "weekly", priority: 0.6 },
     { path: "/notify", freq: "weekly", priority: 0.6 },
