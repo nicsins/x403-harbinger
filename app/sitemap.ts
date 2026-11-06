@@ -4,6 +4,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const base = "https://www.x403-harbinger.com";
   const rows: Array<{ path: string; freq: MetadataRoute.Sitemap[number]["changeFrequency"]; priority: number }> = [
     { path: "", freq: "daily", priority: 1 },
+    { path: "/services", freq: "weekly", priority: 0.92 },
     { path: "/desk", freq: "hourly", priority: 0.95 },
     { path: "/edge", freq: "hourly", priority: 0.9 },
     { path: "/agency", freq: "hourly", priority: 0.9 },
