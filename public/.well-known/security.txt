@@ -1,0 +1,3 @@
+Contact: mailto:nicsins@gmail.com
+Expires: 2027-11-10T23:59:59Z
+Canonical: https://www.x403-harbinger.com/.well-known/security.txt
